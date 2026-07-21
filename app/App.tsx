@@ -7,6 +7,7 @@ import { Toasts } from "./components/Toasts";
 
 import { Splash } from "./screens/Splash";
 import { OnboardWizard } from "./screens/Onboarding";
+import { Login } from "./screens/Login";
 import { Home } from "./screens/Home";
 import { Explore } from "./screens/Explore";
 import { FundDetail } from "./screens/FundDetail";
@@ -37,6 +38,9 @@ function Router() {
       break;
     case "onboard":
       screen = <OnboardWizard />;
+      break;
+    case "login":
+      screen = <Login />;
       break;
     case "home":
       screen = <Home />;

@@ -35,6 +35,7 @@ export const fundByIsin = (isin: string) =>
 export type ScreenName =
   | "splash"
   | "onboard"
+  | "login"
   | "phone"
   | "otp"
   | "pan"
@@ -309,6 +310,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     TAB_SCREENS.find((t) => t === route.screen) ??
     ([
       "onboard",
+      "login",
       "fund",
       "payment",
       "success",

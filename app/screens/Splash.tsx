@@ -4,7 +4,7 @@ import { useStore } from "../lib/store";
 import { Mark } from "../components/Mark";
 
 export function Splash() {
-  const { go, switchTab } = useStore();
+  const { go } = useStore();
   return (
     <div className="screen animate-in" style={{ background: "var(--ink)" }}>
       <div className="safe-top" />
@@ -43,7 +43,7 @@ export function Splash() {
         <button
           className="btn btn-block"
           style={{ background: "transparent", color: "#A9A497", marginTop: 4 }}
-          onClick={() => switchTab("home")}
+          onClick={() => go("login")}
         >
           I already have an account
         </button>
