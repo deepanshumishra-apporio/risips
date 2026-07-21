@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>risips — brand basics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600&family=Instrument+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1A1A18;
+    --paper:#F3F1EB;
+    --line:#E5E1D6;
+    --line-soft:#EEEBE3;
+    --mute:#8C877C;
+    --green:#1B6B4A;
+    --green-rev:#2EB77F;
+    --dot:var(--green);
+    --gap:28px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"Instrument Sans",system-ui,sans-serif;
+    font-size:15px;
+    line-height:1.6;
+    background-image:
+      linear-gradient(to right, var(--line-soft) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--line-soft) 1px, transparent 1px);
+    background-size:28px 28px;
+  }
+  .sheet{max-width:1120px;margin:0 auto;border-left:1px solid var(--line);border-right:1px solid var(--line);background:rgba(243,241,235,.72)}
+
+  /* ---- utility type ---- */
+  .lab{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
+  .num{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.02em}
+  h1{font-family:"Sora",sans-serif;font-weight:600;font-size:clamp(34px,5vw,54px);line-height:1.02;letter-spacing:-.03em}
+  h2{font-family:"Sora",sans-serif;font-weight:500;font-size:19px;letter-spacing:-.01em}
+  p{max-width:56ch;color:#3A382F}
+  a{color:inherit}
+
+  /* ---- rails ---- */
+  .rail{display:flex;justify-content:space-between;align-items:center;padding:14px 28px;border-bottom:1px solid var(--line)}
+  .rail .mini{display:flex;align-items:center;gap:9px;font-family:"Sora",sans-serif;font-weight:500;letter-spacing:.06em;font-size:14px}
+
+  /* ---- section frame ---- */
+  section{border-bottom:1px solid var(--line);padding:44px 28px 52px}
+  .head{display:flex;align-items:baseline;gap:16px;margin-bottom:26px}
+  .head .rule{flex:1;height:1px;background:var(--line)}
+
+  /* ---- hero ---- */
+  .hero{display:grid;grid-template-columns:minmax(280px,440px) 1fr;gap:56px;align-items:center;padding:72px 28px 76px}
+  .hero .plate{border:1px solid var(--line);background:var(--paper);padding:24px;position:relative}
+  .hero .plate::after{content:"166 × 166 u";position:absolute;right:10px;bottom:8px;font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--mute)}
+  .hero h1 em{font-style:normal;color:var(--green)}
+  .hero p{margin-top:18px}
+  .eyebrow{margin-bottom:18px}
+
+  /* ---- mark svg ---- */
+  .mark{display:block;width:100%;height:auto;color:var(--ink)}
+  .mark .fold{fill:none;stroke:currentColor;stroke-width:28;stroke-linecap:round;stroke-linejoin:round}
+  .mark .point{fill:var(--dot)}
+
+  /* draw-on */
+  @media (prefers-reduced-motion:no-preference){
+    .draw .fold{stroke-dasharray:544;stroke-dashoffset:544;animation:trace 1.5s cubic-bezier(.65,0,.2,1) .15s forwards}
+    .draw .point{opacity:0;transform:scale(.2);transform-origin:14px 152px;animation:pop .5s cubic-bezier(.2,1.4,.4,1) 1.5s forwards}
+  }
+  @keyframes trace{to{stroke-dashoffset:0}}
+  @keyframes pop{to{opacity:1;transform:scale(1)}}
+
+  /* ---- grids ---- */
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:40px}
+  .three{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+  .card{border:1px solid var(--line);background:var(--paper);padding:22px}
+  .card.dark{background:var(--ink);border-color:var(--ink)}
+  .card.dark .mark{color:var(--paper)}
+  .card.dark, .card.dark .lab{color:#A9A497}
+
+  /* spec table */
+  dl.spec{display:grid;grid-template-columns:auto 1fr;gap:0 20px;font-family:"IBM Plex Mono",monospace;font-size:12px}
+  dl.spec dt{color:var(--mute);padding:7px 0;border-bottom:1px dotted var(--line)}
+  dl.spec dd{padding:7px 0;border-bottom:1px dotted var(--line);text-align:right}
+  dl.spec dt:last-of-type,dl.spec dd:last-of-type{border-bottom:0}
+
+  /* wordmark */
+  .wordmark{font-family:"Sora",sans-serif;font-weight:500;letter-spacing:.06em;line-height:1}
+  .wm-big{font-size:clamp(56px,10vw,104px)}
+  .lock-h{display:flex;align-items:center;gap:20px}
+  .lock-h .mark{width:64px}
+  .lock-h .wordmark{font-size:40px}
+  .lock-v{display:flex;flex-direction:column;align-items:center;gap:16px}
+  .lock-v .mark{width:64px}
+  .lock-v .wordmark{font-size:30px}
+  .center{display:flex;align-items:center;justify-content:center;min-height:180px}
+
+  /* icon ramp */
+  .ramp{display:flex;align-items:flex-end;gap:22px;flex-wrap:wrap}
+  .ic{background:var(--ink);display:flex;align-items:center;justify-content:center}
+  .ic .mark{width:62%;color:var(--paper)}
+  .ic.light{background:var(--paper);border:1px solid var(--line)}
+  .ic.light .mark{color:var(--ink)}
+  .cap{margin-top:8px;text-align:center}
+
+  /* swatches */
+  .sw{border:1px solid var(--line)}
+  .sw .chip{height:96px}
+  .sw .meta{padding:12px 14px;display:flex;justify-content:space-between;align-items:baseline;gap:8px;background:var(--paper)}
+
+  /* rules list */
+  ul.rules{list-style:none;display:grid;gap:9px;max-width:56ch}
+  ul.rules li{display:flex;gap:11px;align-items:flex-start;font-size:14.5px;color:#3A382F}
+  ul.rules li::before{content:"";flex:0 0 auto;width:8px;height:8px;border-radius:50%;margin-top:8px;background:var(--ink)}
+  ul.rules.no li::before{background:none;border:1px solid #B9B4A6}
+
+  .foot{padding:22px 28px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+  @media (max-width:860px){
+    .hero{grid-template-columns:1fr;gap:36px;padding:48px 20px}
+    .two,.three{grid-template-columns:1fr}
+    section{padding:36px 20px 42px}
+    .rail,.foot{padding:14px 20px}
+  }
+</style>
+</head>
+<body>
+
+<!-- shared geometry -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="fold-mark">
+      <path d="M14 106 L14 14 L152 14 L152 152 L64 152 L64 64"
+            fill="none" stroke="currentColor" stroke-width="28"
+            stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="14" cy="152" r="14" fill="var(--dot)"/>
+    </g>
+  </defs>
+</svg>
+
+<main class="sheet">
+
+  <div class="rail">
+    <div class="mini">
+      <svg class="mark" viewBox="0 0 166 166" style="width:18px"><use href="#fold-mark"/></svg>
+      risips
+    </div>
+    <div class="lab">Brand basics · sheet 01 · v1.0</div>
+  </div>
+
+  <!-- HERO -->
+  <section class="hero" style="border-bottom:1px solid var(--line)">
+    <div class="plate">
+      <svg class="mark draw" viewBox="-14 -14 194 194" aria-label="risips mark">
+        <path class="fold" d="M14 106 L14 14 L152 14 L152 152 L64 152 L64 64"/>
+        <circle class="point" cx="14" cy="152" r="14"/>
+      </svg>
+    </div>
+    <div>
+      <div class="lab eyebrow">An Arthasuta platform</div>
+      <h1>One stroke.<br>One <em>point</em>.</h1>
+      <p>The risips mark is a single unbroken line. It turns four times, folds inward, and stops — it never closes. The green point sits in the one corner the line left open.</p>
+      <p style="margin-top:14px">That's the whole idea: the stroke is what's already compounding, the point is the next instalment waiting to be folded in.</p>
+    </div>
+  </section>
+
+  <!-- CONSTRUCTION -->
+  <section>
+    <div class="head"><h2>Construction</h2><div class="rule"></div><div class="lab">Fig. A</div></div>
+    <div class="two">
+      <div class="card">
+        <svg viewBox="-24 -24 214 214" class="mark" style="color:var(--ink)">
+          <!-- axes -->
+          <g stroke="#C9C3B4" stroke-width="1" stroke-dasharray="4 4">
+            <line x1="14" y1="-20" x2="14" y2="186"/>
+            <line x1="64" y1="-20" x2="64" y2="186"/>
+            <line x1="152" y1="-20" x2="152" y2="186"/>
+            <line x1="-20" y1="14" x2="186" y2="14"/>
+            <line x1="-20" y1="64" x2="186" y2="64"/>
+            <line x1="-20" y1="106" x2="186" y2="106"/>
+            <line x1="-20" y1="152" x2="186" y2="152"/>
+          </g>
+          <!-- radius circles at joins + terminals -->
+          <g fill="none" stroke="#C9C3B4" stroke-width="1">
+            <circle cx="14" cy="14" r="14"/><circle cx="152" cy="14" r="14"/>
+            <circle cx="152" cy="152" r="14"/><circle cx="64" cy="152" r="14"/>
+            <circle cx="14" cy="106" r="14"/><circle cx="64" cy="64" r="14"/>
+          </g>
+          <!-- the stroke, ghosted, plus centre line -->
+          <path class="fold" d="M14 106 L14 14 L152 14 L152 152 L64 152 L64 64" opacity="0.14"/>
+          <path d="M14 106 L14 14 L152 14 L152 152 L64 152 L64 64" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+          <circle cx="14" cy="152" r="14" fill="none" stroke="var(--green)" stroke-width="1.5"/>
+          <circle cx="14" cy="152" r="2" fill="var(--green)"/>
+        </svg>
+      </div>
+      <div>
+        <p style="margin-bottom:20px">Everything is derived from one value: the stroke width. Set it, and the rest of the mark falls out of the grid. Never redraw the mark by eye — scale the vector.</p>
+        <dl class="spec">
+          <dt>Grid</dt><dd>166 × 166 u</dd>
+          <dt>Stroke width</dt><dd>28 u (= 1 u′)</dd>
+          <dt>Cap / join</dt><dd>round / round</dd>
+          <dt>Outer axis square</dt><dd>138 × 138 u</dd>
+          <dt>Fold axis from left</dt><dd>50 u</dd>
+          <dt>Left terminal</dt><dd>92 u below top axis</dd>
+          <dt>Inner terminal</dt><dd>50 u below top axis</dd>
+          <dt>Path length</dt><dd>544 u, unbroken</dd>
+          <dt>Point diameter</dt><dd>28 u (= stroke width)</dd>
+          <dt>Point centre</dt><dd>14, 152 u</dd>
+          <dt>Terminal-to-point gap</dt><dd>18 u (0.64 × stroke)</dd>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <!-- THE POINT -->
+  <section>
+    <div class="head"><h2>The point</h2><div class="rule"></div><div class="lab">Fig. B</div></div>
+    <div class="two">
+      <div>
+        <p>The point is not decoration and it is not a bullet. It is a positional element: it sits exactly on the left axis and exactly on the bottom axis — the corner the fold never arrives at. Move it and the mark loses its only argument.</p>
+        <p style="margin-top:14px">It carries Arthasuta's green, and it is the only place that green appears in the risips identity. Not in the wordmark, not in the UI chrome, not in the container. One point of colour on an otherwise achromatic system is what makes it read at a glance.</p>
+        <dl class="spec" style="margin-top:22px">
+          <dt>Point on light</dt><dd>#1B6B4A</dd>
+          <dt>Point on ink</dt><dd>#2EB77F <span style="color:var(--mute)">(proposed)</span></dd>
+          <dt>Locked to</dt><dd>left axis × bottom axis</dd>
+          <dt>Detaches below</dt><dd>24 px mark height</dd>
+        </dl>
+      </div>
+      <div class="card" style="display:flex;align-items:center;justify-content:center;padding:34px">
+        <svg viewBox="-22 -22 210 210" class="mark" style="width:100%">
+          <path class="fold" d="M14 106 L14 14 L152 14 L152 152 L64 152 L64 64" opacity="0.13"/>
+          <path d="M14 62 L14 106" stroke="currentColor" stroke-width="28" stroke-linecap="round" fill="none"/>
+          <g stroke="var(--green)" stroke-width="1" stroke-dasharray="3 3">
+            <line x1="14" y1="-18" x2="14" y2="184"/>
+            <line x1="-18" y1="152" x2="184" y2="152"/>
+          </g>
+          <line x1="40" y1="120" x2="40" y2="138" stroke="var(--green)" stroke-width="1"/>
+          <line x1="36" y1="120" x2="44" y2="120" stroke="var(--green)" stroke-width="1"/>
+          <line x1="36" y1="138" x2="44" y2="138" stroke="var(--green)" stroke-width="1"/>
+          <circle class="point" cx="14" cy="152" r="14"/>
+          <text x="49" y="132" font-family="IBM Plex Mono" font-size="9" fill="var(--green)">18 u gap</text>
+          <text x="72" y="147" font-family="IBM Plex Mono" font-size="9" fill="var(--green)">bottom axis</text>
+          <text x="20" y="-8" font-family="IBM Plex Mono" font-size="9" fill="var(--green)">left axis</text>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- WORDMARK -->
+  <section>
+    <div class="head"><h2>Wordmark</h2><div class="rule"></div><div class="lab">Sora Medium · lowercase</div></div>
+    <div class="card" style="padding:44px 28px;text-align:center;margin-bottom:24px">
+      <div class="wordmark wm-big">risips</div>
+    </div>
+    <div class="two">
+      <ul class="rules">
+        <li>Always lowercase in the wordmark: <strong>risips</strong>.</li>
+        <li>In running text, use <strong>Risips</strong> or <strong>RISIPS</strong>. Never <s>riSIPs</s> — the name is a word, not an acronym.</li>
+        <li>Tracking +0.06 em. Do not tighten to fit.</li>
+        <li>The wordmark stays ink or paper. It never takes the green.</li>
+      </ul>
+      <dl class="spec">
+        <dt>Typeface</dt><dd>Sora</dd>
+        <dt>Weight</dt><dd>500 Medium</dd>
+        <dt>Case</dt><dd>lowercase</dd>
+        <dt>Tracking</dt><dd>+0.06 em</dd>
+        <dt>Pronounced</dt><dd>ree-sips</dd>
+      </dl>
+    </div>
+  </section>
+
+  <!-- LOCKUPS -->
+  <section>
+    <div class="head"><h2>Lockups</h2><div class="rule"></div><div class="lab">Fig. C</div></div>
+    <div class="three">
+      <div>
+        <div class="card center">
+          <div class="lock-h">
+            <svg class="mark" viewBox="0 0 166 166"><use href="#fold-mark"/></svg>
+            <span class="wordmark">risips</span>
+          </div>
+        </div>
+        <div class="lab cap">Horizontal — primary</div>
+      </div>
+      <div>
+        <div class="card center">
+          <div class="lock-v">
+            <svg class="mark" viewBox="0 0 166 166"><use href="#fold-mark"/></svg>
+            <span class="wordmark">risips</span>
+          </div>
+        </div>
+        <div class="lab cap">Stacked — square formats</div>
+      </div>
+      <div>
+        <div class="card dark center">
+          <div class="lock-h">
+            <svg class="mark" viewBox="0 0 166 166" style="--dot:var(--green-rev)"><use href="#fold-mark"/></svg>
+            <span class="wordmark" style="color:var(--paper)">risips</span>
+          </div>
+        </div>
+        <div class="lab cap">Reversed on ink</div>
+      </div>
+    </div>
+    <p style="margin-top:22px">Mark height in the horizontal lockup equals the wordmark's cap-to-baseline height × 1.6. The optical gap between mark and wordmark is one stroke width of the mark.</p>
+  </section>
+
+  <!-- APP ICON -->
+  <section>
+    <div class="head"><h2>App icon</h2><div class="rule"></div><div class="lab">Fig. D</div></div>
+    <div class="ramp">
+      <div>
+        <div class="ic" style="width:128px;height:128px;border-radius:29px"><svg class="mark" viewBox="0 0 166 166" style="--dot:var(--green-rev)"><use href="#fold-mark"/></svg></div>
+        <div class="lab cap">128</div>
+      </div>
+      <div>
+        <div class="ic" style="width:80px;height:80px;border-radius:18px"><svg class="mark" viewBox="0 0 166 166" style="--dot:var(--green-rev)"><use href="#fold-mark"/></svg></div>
+        <div class="lab cap">80</div>
+      </div>
+      <div>
+        <div class="ic" style="width:48px;height:48px;border-radius:11px"><svg class="mark" viewBox="0 0 166 166" style="--dot:var(--green-rev)"><use href="#fold-mark"/></svg></div>
+        <div class="lab cap">48</div>
+      </div>
+      <div>
+        <div class="ic light" style="width:128px;height:128px;border-radius:29px"><svg class="mark" viewBox="0 0 166 166"><use href="#fold-mark"/></svg></div>
+        <div class="lab cap">128 light</div>
+      </div>
+      <div>
+        <div class="ic light" style="width:48px;height:48px;border-radius:11px"><svg class="mark" viewBox="0 0 166 166"><use href="#fold-mark"/></svg></div>
+        <div class="lab cap">48 light</div>
+      </div>
+      <div>
+        <div class="ic light" style="width:28px;height:28px;border-radius:7px"><svg class="mark" viewBox="0 0 166 166" style="--dot:currentColor"><use href="#fold-mark"/></svg></div>
+        <div class="lab cap">28 mono</div>
+      </div>
+    </div>
+    <p style="margin-top:24px">Ink is the default icon. The mark occupies 62% of the tile; corner radius is 22.5% of the tile — the iOS squircle, so the tile never competes with the mark's own round joins. Below 24 px the 18 u gap closes up and the point stops reading as separate: drop to the mono mark.</p>
+  </section>
+
+  <!-- CLEAR SPACE -->
+  <section>
+    <div class="head"><h2>Clear space &amp; minimum size</h2><div class="rule"></div><div class="lab">Fig. E</div></div>
+    <div class="two">
+      <div class="card" style="display:flex;align-items:center;justify-content:center;padding:30px">
+        <svg viewBox="-42 -42 250 250" class="mark" style="width:74%">
+          <rect x="-28" y="-28" width="222" height="222" fill="none" stroke="var(--green)" stroke-width="1" stroke-dasharray="5 5"/>
+          <rect x="-28" y="-28" width="28" height="28" fill="var(--green)" opacity="0.12"/>
+          <text x="-24" y="-33" font-family="IBM Plex Mono" font-size="9" fill="var(--green)">x = 1 stroke width</text>
+          <use href="#fold-mark"/>
+        </svg>
+      </div>
+      <div>
+        <p>Clear space on every side is <strong>x</strong>, where x is one stroke width of the mark at the size in use. Nothing enters it — no type, no rule, no container edge.</p>
+        <p style="margin-top:14px">The mark has no container. Do not re-introduce the box that was removed: the open counter is load-bearing.</p>
+        <dl class="spec" style="margin-top:20px">
+          <dt>Clear space</dt><dd>1 × stroke width</dd>
+          <dt>Min size — screen, with point</dt><dd>24 px</dd>
+          <dt>Min size — screen, mono</dt><dd>16 px</dd>
+          <dt>Min size — print</dt><dd>8 mm</dd>
+          <dt>Lockup min width</dt><dd>96 px</dd>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <!-- COLOUR -->
+  <section>
+    <div class="head"><h2>Colour</h2><div class="rule"></div><div class="lab">Achromatic + one point</div></div>
+    <div class="three" style="gap:18px">
+      <div class="sw"><div class="chip" style="background:#1A1A18"></div><div class="meta"><span>Ink</span><span class="num">#1A1A18</span></div></div>
+      <div class="sw"><div class="chip" style="background:#F3F1EB"></div><div class="meta"><span>Paper</span><span class="num">#F3F1EB</span></div></div>
+      <div class="sw"><div class="chip" style="background:#E5E1D6"></div><div class="meta"><span>Line</span><span class="num">#E5E1D6</span></div></div>
+      <div class="sw"><div class="chip" style="background:#8C877C"></div><div class="meta"><span>Mute</span><span class="num">#8C877C</span></div></div>
+      <div class="sw"><div class="chip" style="background:#1B6B4A"></div><div class="meta"><span>Arthasuta green</span><span class="num">#1B6B4A</span></div></div>
+      <div class="sw"><div class="chip" style="background:#2EB77F"></div><div class="meta"><span>Green on ink</span><span class="num">#2EB77F</span></div></div>
+    </div>
+    <p style="margin-top:24px">Green is a point, not a palette. It appears on the dot and nowhere else in the mark system. In product UI it may carry one job — positive movement in returns — and nothing more; #1B6B4A only clears 2.7:1 on ink, so use #2EB77F wherever the background is dark.</p>
+  </section>
+
+  <!-- TYPE -->
+  <section>
+    <div class="head"><h2>Typography</h2><div class="rule"></div><div class="lab">3 roles</div></div>
+    <div class="three">
+      <div class="card">
+        <div class="lab" style="margin-bottom:12px">Display · Sora</div>
+        <div style="font-family:Sora;font-weight:600;font-size:34px;letter-spacing:-.03em;line-height:1.05">Start with<br>₹500.</div>
+        <p style="font-size:13px;margin-top:14px">Wordmark and headlines only. 500–600. Negative tracking above 28 px.</p>
+      </div>
+      <div class="card">
+        <div class="lab" style="margin-bottom:12px">Text · Instrument Sans</div>
+        <div style="font-size:15px;line-height:1.55">A systematic investment plan buys the same rupee amount every month, whatever the NAV happens to be that day.</div>
+        <p style="font-size:13px;margin-top:14px">Body, UI labels, buttons. 400–500.</p>
+      </div>
+      <div class="card">
+        <div class="lab" style="margin-bottom:12px">Data · IBM Plex Mono</div>
+        <table class="num" style="width:100%;border-collapse:collapse;font-size:15px">
+          <tr><td style="padding:4px 0;color:var(--mute)">NAV</td><td style="text-align:right">₹ 148.2260</td></tr>
+          <tr><td style="padding:4px 0;color:var(--mute)">1Y</td><td style="text-align:right">+18.40%</td></tr>
+          <tr><td style="padding:4px 0;color:var(--mute)">XIRR</td><td style="text-align:right">+14.02%</td></tr>
+        </table>
+        <p style="font-size:13px;margin-top:14px">NAVs, returns, folio numbers, dates — anything that must align in a column.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- RULES -->
+  <section style="border-bottom:0">
+    <div class="head"><h2>Do &amp; don't</h2><div class="rule"></div><div class="lab">Fig. F</div></div>
+    <div class="two">
+      <div>
+        <div class="lab" style="margin-bottom:12px">Do</div>
+        <ul class="rules">
+          <li>Scale the vector. Stroke, caps, joins and point scale together.</li>
+          <li>Use ink on paper, or paper on ink. Those are the two.</li>
+          <li>Keep the point green, always, at every size it survives.</li>
+          <li>Let the mark sit alone with its clear space.</li>
+        </ul>
+      </div>
+      <div>
+        <div class="lab" style="margin-bottom:12px">Don't</div>
+        <ul class="rules no">
+          <li>Close the corner, or extend the stroke to reach the point.</li>
+          <li>Move, resize or outline the point, or add a second one.</li>
+          <li>Put the mark back inside a box, badge or circle.</li>
+          <li>Recolour the stroke green, or the point anything else.</li>
+          <li>Stretch, skew, add shadow, gradient or bevel.</li>
+          <li>Rebuild the wordmark in another face, or write riSIPs.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <div class="rail foot">
+    <div class="lab">risips — a platform by Arthasuta Finedu Pvt. Ltd., Gurugram</div>
+    <div class="lab">Mutual fund investments are subject to market risks.</div>
+  </div>
+
+</main>
+</body>
+</html>
