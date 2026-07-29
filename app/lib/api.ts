@@ -537,11 +537,24 @@ export const api = {
   },
 
   investor: {
+    /**
+     * Link this account to an existing Tarrakki investor by PAN.
+     *
+     * A PAN with no investor is a normal outcome, not an error: `linked` comes back false with
+     * `next` saying what to do — `create_investor` when the PAN is already KYC-verified, or
+     * `start_kyc` when it isn't. Callers must check `linked` rather than assuming success.
+     */
     link: (pan: string) =>
-      request<{ linked: boolean; investorId: string }>("/api/investor/link", {
-        method: "POST",
-        body: { pan },
-      }),
+      request<{
+        linked: boolean;
+        pan: string;
+        investorId?: string;
+        reason?: "no_investor";
+        kycStatus?: string;
+        kycVerified?: boolean;
+        next?: "create_investor" | "start_kyc";
+        message?: string;
+      }>("/api/investor/link", { method: "POST", body: { pan } }),
     create: (body: Record<string, unknown>) =>
       request<{ investor: InvestorDTO }>("/api/investor", { method: "POST", body }),
     get: () =>

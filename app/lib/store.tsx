@@ -231,6 +231,17 @@ function sliceError(e: unknown, fallback: string): string {
 
 /* --------------------------- context ------------------------------------- */
 
+/**
+ * Outcome of a PAN link.
+ *
+ * `linked: false` is not a failure — it means the PAN has no Tarrakki investor yet, which is
+ * the normal state for a new signup. `next` says whether to create one (`create_investor`,
+ * when the PAN is already KYC-verified) or send the user through KYC first (`start_kyc`).
+ *
+ * Derived from the client so the two can't drift apart.
+ */
+export type LinkResult = Awaited<ReturnType<typeof api.investor.link>>;
+
 interface Store {
   // routing
   route: Route;
@@ -259,7 +270,7 @@ interface Store {
   // auth
   requestOtp: (mobile: string) => Promise<{ devCode?: string }>;
   verifyOtp: (mobile: string, code: string) => Promise<void>;
-  linkInvestor: (pan: string) => Promise<void>;
+  linkInvestor: (pan: string) => Promise<LinkResult>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 
@@ -579,10 +590,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
+  /**
+   * Link this account to a Tarrakki investor by PAN.
+   *
+   * Returns the outcome rather than throwing when no investor exists — that is a normal state
+   * for a new signup, and the caller needs `next` to decide where to send them. Only refreshes
+   * when something was actually linked.
+   */
   const linkInvestor = useCallback(
-    async (pan: string) => {
-      await api.investor.link(pan.trim().toUpperCase());
-      await refresh();
+    async (pan: string): Promise<LinkResult> => {
+      const res = await api.investor.link(pan.trim().toUpperCase());
+      if (res.linked) await refresh();
+      return res;
     },
     [refresh],
   );

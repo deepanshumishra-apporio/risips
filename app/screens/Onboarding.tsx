@@ -371,9 +371,21 @@ function PanStep({ d, set, next }: StepProps) {
     setPhase("checking");
     setError(null);
     try {
-      await linkInvestor(pan);
-      set({ pan });
-      setPhase("done");
+      const res = await linkInvestor(pan);
+      if (res.linked) {
+        set({ pan });
+        setPhase("done");
+        return;
+      }
+      // A PAN with no Tarrakki investor is the normal state for a new signup. Report what is
+      // actually needed instead of failing as if the PAN were bad.
+      setError(
+        res.message ??
+          (res.next === "start_kyc"
+            ? "This PAN isn't KYC-verified yet. Complete KYC before opening an investment account."
+            : "This PAN has no investment account yet."),
+      );
+      setPhase("input");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't verify that PAN.");
       setPhase("input");

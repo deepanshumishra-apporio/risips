@@ -117,9 +117,20 @@ export function Login() {
     setBusy(true);
     setError(null);
     try {
-      await linkInvestor(pan.toUpperCase());
-      toast("Account linked");
-      switchTab("home");
+      const res = await linkInvestor(pan.toUpperCase());
+      if (res.linked) {
+        toast("Account linked");
+        switchTab("home");
+        return;
+      }
+      // No investor for this PAN. That is the normal state for a new signup, not an error, so
+      // say what is actually needed rather than the old dead "no investor found for PAN".
+      setError(
+        res.message ??
+          (res.next === "start_kyc"
+            ? "This PAN isn't KYC-verified yet. Complete KYC before opening an investment account."
+            : "This PAN has no investment account yet."),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't link that PAN.");
     } finally {
