@@ -7,8 +7,10 @@
 
 import type { Fund, RiskLevel } from "./types";
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:4000";
+/** Hosted backend. Override with NEXT_PUBLIC_API_URL to point at a local server instead. */
+export const DEFAULT_API_BASE = "https://mutual-fund-backend-lc6h.onrender.com";
+
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || DEFAULT_API_BASE;
 
 const TOKEN_KEY = "risips.session";
 
