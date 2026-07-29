@@ -7,10 +7,19 @@
 
 import type { Fund, RiskLevel } from "./types";
 
-/** Hosted backend. Override with NEXT_PUBLIC_API_URL to point at a local server instead. */
-export const DEFAULT_API_BASE = "https://mutual-fund-backend-lc6h.onrender.com";
-
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || DEFAULT_API_BASE;
+/**
+ * Where API calls go.
+ *
+ * Empty by default, meaning requests are same-origin (`/api/...`) and get proxied to the real
+ * backend by the rewrites in next.config.ts. That makes CORS a non-issue: the browser never
+ * talks to another origin, so a new deployment domain or Vercel preview URL can't break the
+ * app. `BACKEND_URL` (server-side, in next.config.ts) chooses the upstream.
+ *
+ * Set NEXT_PUBLIC_API_URL to bypass the proxy and call a backend directly — useful when
+ * running the frontend and backend separately in development. Doing so reintroduces CORS, so
+ * that origin must be listed in the backend's CORS_ORIGIN.
+ */
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "";
 
 const TOKEN_KEY = "risips.session";
 
