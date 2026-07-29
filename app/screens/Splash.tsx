@@ -1,10 +1,36 @@
 "use client";
 
+import { useEffect } from "react";
 import { useStore } from "../lib/store";
 import { Mark } from "../components/Mark";
+import { Spinner } from "../components/ui";
 
 export function Splash() {
-  const { go } = useStore();
+  const { go, switchTab, state } = useStore();
+
+  // A stored session is restored on boot; skip straight past the splash when one resolves.
+  useEffect(() => {
+    if (!state.loading && state.authenticated) switchTab("home");
+  }, [state.loading, state.authenticated, switchTab]);
+
+  if (state.loading) {
+    return (
+      <div className="screen animate-in" style={{ background: "var(--ink)" }}>
+        <div className="safe-top" />
+        <div
+          className="grow col"
+          style={{ alignItems: "center", justifyContent: "center", padding: 32, gap: 22 }}
+        >
+          <Mark size={72} reversed />
+          <div className="wordmark" style={{ color: "var(--paper)", fontSize: 44 }}>
+            risips
+          </div>
+          <Spinner />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="screen animate-in" style={{ background: "var(--ink)" }}>
       <div className="safe-top" />

@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { FUNDS, useStore } from "../lib/store";
+import { useEffect, useMemo, useState } from "react";
+import { useStore } from "../lib/store";
+import type { Fund } from "../lib/types";
 import { AmcLogo } from "./AmcLogo";
 import { SearchIcon, CheckIcon, PlusIcon } from "./icons";
-import { pct } from "../lib/format";
+import { pctOr } from "../lib/format";
 
 export function AddFundsSheet({
   listId,
@@ -15,22 +16,34 @@ export function AddFundsSheet({
   listName: string;
   onClose: () => void;
 }) {
-  const { state, addFundToList, removeFundFromList, toast } = useStore();
+  const { state, funds, searchFunds, addFundToList, removeFundFromList, toast } = useStore();
   const [q, setQ] = useState("");
+  const [matches, setMatches] = useState<Fund[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  // Derived, not stored: with no query we simply show the browse list.
+  const results = q.trim() ? matches ?? [] : funds;
 
   const list = state.watchlists.find((w) => w.id === listId);
   const inList = useMemo(() => new Set(list?.isins ?? []), [list]);
 
-  const results = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return FUNDS;
-    return FUNDS.filter(
-      (f) =>
-        f.name.toLowerCase().includes(s) ||
-        f.amc.toLowerCase().includes(s) ||
-        f.category.toLowerCase().includes(s)
-    );
-  }, [q]);
+  // Search the full 5.9k-fund catalogue server-side, debounced, with the in-flight request
+  // aborted when the query moves on.
+  useEffect(() => {
+    const s = q.trim();
+    if (!s) return;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => {
+      setSearching(true);
+      searchFunds(s, ctrl.signal)
+        .then(setMatches)
+        .catch(() => {})
+        .finally(() => setSearching(false));
+    }, 250);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [q, searchFunds]);
 
   return (
     <div className="overlay" onClick={onClose}>
@@ -83,7 +96,7 @@ export function AddFundsSheet({
                     <span className="rowc gap8">
                       <span className="tag">{f.category}</span>
                       <span className="mono green" style={{ fontSize: 11.5, fontWeight: 500 }}>
-                        {pct(f.returns["3y"])} · 3Y
+                        {pctOr(f.returns["3y"])} · 3Y
                       </span>
                     </span>
                   </span>
@@ -115,7 +128,7 @@ export function AddFundsSheet({
             })}
             {results.length === 0 && (
               <div className="muted" style={{ padding: "28px 0", textAlign: "center" }}>
-                No funds match “{q}”.
+                {searching ? "Searching…" : `No funds match “${q}”.`}
               </div>
             )}
           </div>

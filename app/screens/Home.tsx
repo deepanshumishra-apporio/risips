@@ -1,10 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { FUNDS, fundByIsin, useStore, portfolioTotals } from "../lib/store";
+import { useState } from "react";
+import { fundByIsin, useStore, portfolioTotals } from "../lib/store";
 import { Mark } from "../components/Mark";
 import { FundCard, FundRow } from "../components/ui";
-import { Sparkline } from "../components/Sparkline";
 import { CartButton } from "../components/CartButton";
 import { inr, pct } from "../lib/format";
 import {
@@ -19,17 +18,18 @@ import {
   ShieldCheck,
 } from "../components/icons";
 
+// Collections map onto real catalogue categories, so tapping one filters Explore to
+// something that actually exists upstream.
 const COLLECTIONS = [
-  { label: "Tax saver ELSS", tag: "Tax saver ELSS" },
-  { label: "Index funds", tag: "Index funds" },
-  { label: "High growth", tag: "High growth" },
-  { label: "Low risk", tag: "Low risk" },
+  { label: "Equity", tag: "Equity" },
+  { label: "Debt", tag: "Debt" },
+  { label: "Hybrid", tag: "Hybrid" },
+  { label: "Commodity", tag: "Commodity" },
+  { label: "Global", tag: "Global" },
 ];
 
-const MARKETS = [
-  { name: "NIFTY 50", value: "24,812.05", change: 0.58 },
-  { name: "SENSEX", value: "81,220.40", change: 0.61 },
-];
+// Index levels (NIFTY/SENSEX) used to be hardcoded here. There is no market-data feed in
+// this integration, so rather than show stale invented numbers the strip is gone.
 
 function greeting() {
   const h = new Date().getHours();
@@ -39,46 +39,24 @@ function greeting() {
 }
 
 export function Home() {
-  const { state, go, switchTab } = useStore();
+  const { state, go, switchTab, funds, logout } = useStore();
   const { holdings, user } = state;
   const totals = portfolioTotals(holdings);
   const invested = holdings.length > 0;
-  const popular = FUNDS.filter((f) => f.tags.includes("Popular"));
+  // "Popular" was a hand-applied tag on sample data. Largest funds by AUM is a real,
+  // defensible stand-in drawn from the live catalogue.
+  const popular = funds.slice(0, 8);
   const [menu, setMenu] = useState(false);
 
-  const watchedIsins = Array.from(
-    new Set(state.watchlists.flatMap((w) => w.isins))
-  );
+  const watchedIsins = Array.from(new Set(state.watchlists.flatMap((w) => w.isins)));
   const watched = watchedIsins
     .map((isin) => fundByIsin(isin))
     .filter(Boolean)
     .slice(0, 4) as NonNullable<ReturnType<typeof fundByIsin>>[];
 
-  // real portfolio value history (units × NAV history) for the sparkline
-  const series = useMemo(() => {
-    const len = 12;
-    const pts = new Array(len).fill(0);
-    for (const h of holdings) {
-      const f = fundByIsin(h.isin);
-      if (!f) continue;
-      const tail = f.chart.slice(-len);
-      const scale = h.current / (h.units * tail[tail.length - 1]);
-      for (let i = 0; i < len; i++) pts[i] += h.units * tail[i] * scale;
-    }
-    return pts;
-  }, [holdings]);
-
-  // today's move across the portfolio
-  const todayChange = useMemo(
-    () =>
-      holdings.reduce((s, h) => {
-        const f = fundByIsin(h.isin);
-        return s + (f ? (h.current * f.navChange) / 100 : 0);
-      }, 0),
-    [holdings]
-  );
-  const todayPct = totals.current > 0 ? (todayChange / totals.current) * 100 : 0;
-  const dayUp = todayChange >= 0;
+  // Per-fund NAV history and 1-day change aren't in this data entitlement, so the
+  // portfolio sparkline and "today's move" figure can't be computed. Both are omitted
+  // rather than approximated.
   const totalUp = totals.gain >= 0;
 
   const initials = user.name.split(" ").map((w) => w[0]).join("").slice(0, 2);
@@ -146,20 +124,10 @@ export function Home() {
                   <span className="num-hero" style={{ fontSize: 28 }}>
                     {inr(totals.current)}
                   </span>
-                  <span
-                    className={`mono ${dayUp ? "green" : "red"}`}
-                    style={{ fontSize: 12.5, fontWeight: 500 }}
-                  >
-                    {dayUp ? "+" : ""}
-                    {inr(todayChange)} ({pct(todayPct)}) today
+                  <span className="muted" style={{ fontSize: 12.5 }}>
+                    {holdings.length} fund{holdings.length === 1 ? "" : "s"}
                   </span>
                 </div>
-                <Sparkline
-                  values={series}
-                  color={totalUp ? "var(--green)" : "var(--red)"}
-                  width={96}
-                  height={44}
-                />
               </div>
               <div className="hr" style={{ margin: "14px 0 12px" }} />
               <div className="between">
@@ -237,35 +205,16 @@ export function Home() {
           </div>
         </div>
 
-        {/* market snapshot */}
-        <div className="pad-x" style={{ marginTop: 12 }}>
-          <div className="stats">
-            {MARKETS.map((m) => (
-              <div className="cell" key={m.name}>
-                <div className="between">
-                  <span className="lab">{m.name}</span>
-                  <span className="mono green" style={{ fontSize: 11.5, fontWeight: 500 }}>
-                    {pct(m.change)}
-                  </span>
-                </div>
-                <div className="v mono" style={{ fontSize: 15 }}>
-                  {m.value}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* popular funds */}
+        {/* largest funds */}
         <div className="section-h">
-          <h2>Popular funds</h2>
+          <h2>Largest funds</h2>
           <button className="lab" onClick={() => switchTab("explore")}>
             See all
           </button>
         </div>
         <div className="hscroll">
           {popular.map((f) => (
-            <FundCard key={f.isin} fund={f} />
+            <FundCard key={f.id} fund={f} />
           ))}
         </div>
 
@@ -313,8 +262,8 @@ export function Home() {
         </div>
         <div className="pad-x">
           <div className="card divide" style={{ padding: "0 16px" }}>
-            {FUNDS.slice(0, 5).map((f) => (
-              <FundRow key={f.isin} fund={f} />
+            {funds.slice(0, 5).map((f) => (
+              <FundRow key={f.id} fund={f} />
             ))}
           </div>
         </div>
@@ -360,7 +309,10 @@ export function Home() {
               className="menu-item danger"
               onClick={() => {
                 setMenu(false);
-                switchTab("splash");
+                // Must clear the session, not just navigate away: the token lives in
+                // localStorage, so merely showing the splash screen leaves you signed in and
+                // the next refresh() puts you straight back into the account.
+                void logout();
               }}
             >
               <LogOutIcon size={18} /> Sign out

@@ -17,18 +17,36 @@ export function SipCalculator({
   const [amount, setAmount] = useState(5000);
   const [years, setYears] = useState(5);
 
-  // project using the fund's 3Y annualised return, monthly compounding
+  // Project using the fund's 3Y annualised return, monthly compounding. When the fund has
+  // no reported 3Y figure there is nothing honest to project from — see the guard below.
+  const rate3y = fund.returns["3y"];
+
   const { invested, future, gain } = useMemo(() => {
-    const rate = fund.returns["3y"] / 100;
+    const rate = (rate3y ?? 0) / 100;
     const n = years * 12;
     const r = rate / 12;
     // future value of a monthly annuity
     const fv = amount * ((Math.pow(1 + r, n) - 1) / r) * (1 + r);
     const invested = amount * n;
     return { invested, future: Math.round(fv), gain: Math.round(fv) - invested };
-  }, [amount, years, fund]);
+  }, [amount, years, rate3y]);
 
-  const gainPctOfTotal = Math.round((gain / future) * 100);
+  const gainPctOfTotal = future > 0 ? Math.round((gain / future) * 100) : 0;
+
+  // Without a past-return figure any projection would be a number we made up.
+  if (rate3y == null) {
+    return (
+      <div className="card card-lg">
+        <div className="lab">SIP projection</div>
+        <div className="muted mt12" style={{ fontSize: 13 }}>
+          This fund has no reported 3-year return, so we can&apos;t project a SIP value for it.
+        </div>
+        <button className="btn btn-green btn-block mt16" onClick={onStart}>
+          Start a SIP
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="card card-lg">
@@ -117,8 +135,7 @@ export function SipCalculator({
         Start this SIP
       </button>
       <div className="muted mt8" style={{ fontSize: 11.5, textAlign: "center" }}>
-        Projection at {fund.returns["3y"].toFixed(1)}% p.a. (past 3Y) — returns
-        are not guaranteed.
+        Projection at {rate3y.toFixed(1)}% p.a. (past 3Y) — returns are not guaranteed.
       </div>
     </div>
   );

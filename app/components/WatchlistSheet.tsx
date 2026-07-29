@@ -35,14 +35,18 @@ export function WatchlistSheet({
     }
   }
 
-  function create() {
+  async function create() {
     const n = name.trim();
     if (!n) return;
-    const id = createWatchlist(n);
-    addFundToList(id, fund.isin);
-    toast(`Added to ${n}`);
-    setName("");
-    setCreating(false);
+    try {
+      const id = await createWatchlist(n);
+      await addFundToList(id, fund.isin);
+      toast(`Added to ${n}`);
+      setName("");
+      setCreating(false);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : `Couldn't create ${n}.`);
+    }
   }
 
   return (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { fundByIsin, useStore } from "../lib/store";
 import { AmcLogo } from "../components/AmcLogo";
 import { CartButton } from "../components/CartButton";
@@ -12,7 +12,7 @@ import {
   TrashIcon,
   HeartIcon,
 } from "../components/icons";
-import { pct } from "../lib/format";
+import { pctOr } from "../lib/format";
 
 export function Wishlist() {
   const {
@@ -33,13 +33,8 @@ export function Wishlist() {
   const [name, setName] = useState("");
   const [showAdd, setShowAdd] = useState(false);
 
-  // keep a valid selection as lists change
-  useEffect(() => {
-    if (lists.length && !lists.some((l) => l.id === activeId)) {
-      setActiveId(lists[0].id);
-    }
-  }, [lists, activeId]);
-
+  // The selection is derived, so a list disappearing (deleted, or replaced by a server
+  // refresh with new ids) falls back to the first list without a corrective re-render.
   const active = lists.find((l) => l.id === activeId) ?? lists[0];
   const funds = (active?.isins ?? [])
     .map((isin) => fundByIsin(isin))
@@ -53,23 +48,31 @@ export function Wishlist() {
     setName(active?.name ?? "");
     setModal({ mode: "rename" });
   }
-  function submitModal() {
+  async function submitModal() {
     const n = name.trim();
     if (!n || !modal) return;
-    if (modal.mode === "create") {
-      const id = createWatchlist(n);
-      setActiveId(id);
-      toast("Watchlist created");
-    } else {
-      renameWatchlist(active.id, n);
-      toast("Watchlist renamed");
+    try {
+      if (modal.mode === "create") {
+        const id = await createWatchlist(n);
+        setActiveId(id);
+        toast("Watchlist created");
+      } else {
+        await renameWatchlist(active.id, n);
+        toast("Watchlist renamed");
+      }
+      setModal(null);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Couldn't save the watchlist.");
     }
-    setModal(null);
   }
-  function remove() {
+  async function remove() {
     if (!active) return;
-    deleteWatchlist(active.id);
-    toast("Watchlist deleted");
+    try {
+      await deleteWatchlist(active.id);
+      toast("Watchlist deleted");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Couldn't delete the watchlist.");
+    }
   }
 
   return (
@@ -194,7 +197,7 @@ export function Wishlist() {
                         <span className="rowc gap8">
                           <span className="tag">{f.category}</span>
                           <span className="mono green" style={{ fontSize: 12, fontWeight: 500 }}>
-                            {pct(f.returns["3y"])} · 3Y
+                            {pctOr(f.returns["3y"])} · 3Y
                           </span>
                         </span>
                       </span>

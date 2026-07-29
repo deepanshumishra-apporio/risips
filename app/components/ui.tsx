@@ -1,7 +1,7 @@
 "use client";
 
 import type { Fund } from "../lib/types";
-import { pct } from "../lib/format";
+import { pctOr } from "../lib/format";
 import { useStore } from "../lib/store";
 import { StarIcon, ChevronRight } from "./icons";
 import { AmcLogo } from "./AmcLogo";
@@ -21,6 +21,9 @@ export function Stars({ n }: { n: number }) {
 }
 
 export function RiskTag({ fund }: { fund: Fund }) {
+  // Riskometer isn't exposed by the current data entitlement; fall back to the scheme
+  // sub-category rather than showing "null risk".
+  if (!fund.risk) return <span className="tag">{fund.subCategory ?? fund.category}</span>;
   return <span className="tag">{fund.risk} risk</span>;
 }
 
@@ -50,13 +53,16 @@ export function FundRow({ fund }: { fund: Fund }) {
         <span className="rowc gap8">
           <span className="tag">{fund.category}</span>
           <span className="muted" style={{ fontSize: 12 }}>
-            {fund.risk}
+            {fund.risk ?? fund.subCategory ?? ""}
           </span>
         </span>
       </span>
       <span className="col" style={{ alignItems: "flex-end", gap: 2 }}>
-        <span className="mono green" style={{ fontSize: 14, fontWeight: 500 }}>
-          {pct(r)}
+        <span
+          className={`mono ${r == null ? "muted" : r >= 0 ? "green" : "red"}`}
+          style={{ fontSize: 14, fontWeight: 500 }}
+        >
+          {pctOr(r)}
         </span>
         <span className="lab" style={{ letterSpacing: "0.08em" }}>
           3Y
@@ -96,8 +102,13 @@ export function FundCard({ fund }: { fund: Fund }) {
       </div>
       <div className="between mt12">
         <span className="lab">3Y returns</span>
-        <span className="mono green" style={{ fontSize: 15, fontWeight: 500 }}>
-          {pct(fund.returns["3y"])}
+        <span
+          className={`mono ${
+            fund.returns["3y"] == null ? "muted" : fund.returns["3y"]! >= 0 ? "green" : "red"
+          }`}
+          style={{ fontSize: 15, fontWeight: 500 }}
+        >
+          {pctOr(fund.returns["3y"])}
         </span>
       </div>
     </button>

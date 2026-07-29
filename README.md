@@ -1,6 +1,9 @@
-# risips — Investor App Prototype
+# risips — Investor App
 
-A mobile-first, click-through prototype of a mutual-fund investing app (Groww / Zerodha / Paytm-Money style), built to show the full investor journey visually. **No backend, no database, no real APIs** — everything runs from static mock data and in-memory state, so it deploys anywhere as static files.
+A mobile-first mutual-fund investing app (Groww / Zerodha / Paytm-Money style) covering the
+full investor journey. It runs against **live Tarrakki data** through the companion
+[`../backend`](../backend) service: ~5,900 real Indian funds, real NAVs and returns, real
+KYC/investor records, and real order placement.
 
 > risips · an Arthasuta platform · _"Mutual funds, simply."_
 
@@ -9,20 +12,55 @@ A mobile-first, click-through prototype of a mutual-fund investing app (Groww / 
 ## 1. Tech
 
 - **Next.js 16** (App Router) + **React 19** + **TypeScript**.
-- **Client-side SPA routing** via a React context state machine (see [`app/lib/store.tsx`](app/lib/store.tsx)) — a history stack with `go / back / switchTab`. This keeps all in-memory state alive across screen transitions without a backend. (react-router was in the original brief; an in-memory router is used instead as it fits the no-backend, shared-state model far better and avoids fighting the App Router.)
-- **State**: one in-memory store in React context. Persisted to `localStorage` (`risips.v1`) so a demo survives refresh.
-- **Data**: a single [`app/lib/funds.json`](app/lib/funds.json) with 10 seeded Indian funds. No external fetches.
+- **Client-side SPA routing** via a React context state machine (see [`app/lib/store.tsx`](app/lib/store.tsx)) — a history stack with `go / back / switchTab`. This keeps shared state alive across screen transitions and avoids fighting the App Router.
+- **State**: one store in React context, hydrated from the backend on boot and refreshed after every mutation. The session token lives in `localStorage` (`risips.session`); nothing else is cached client-side, so the UI always reflects what upstream actually recorded.
+- **Data**: [`app/lib/api.ts`](app/lib/api.ts) — a typed client for the backend. The Tarrakki credentials stay server-side and never reach the browser.
 - **Styling**: hand-written flat design system in [`app/globals.css`](app/globals.css) using the brand tokens (no Tailwind classes in the UI). Fonts loaded via `<link>` (Sora, Instrument Sans, IBM Plex Mono) so the build never needs a network fetch.
 - **Device frame**: the app is centered in an **iPhone 17 Pro** frame on desktop (Dynamic Island, titanium edge, side buttons, iOS status bar + home indicator) and goes edge-to-edge on real mobile.
 
 ### Run
 
+The backend must be running first — see [`../backend/README.md`](../backend/README.md).
+
 ```bash
-npm install
-npm run dev      # http://localhost:3000
+bun install
 ```
 
-Other scripts: `npm run build`, `npm start` (serve the build), `npm run lint`.
+```bash
+bun run dev
+```
+
+Set `NEXT_PUBLIC_API_URL` in `.env.local` if the backend isn't on `http://localhost:4000`.
+
+Other scripts: `bun run build`, `bun start`, `bun run lint`.
+
+### Logging in
+
+Login is mobile + 6-digit OTP. There is no SMS provider wired up, so in development the
+backend returns the code and the OTP screen displays it as **DEV CODE**. After verifying,
+enter your PAN to link the Tarrakki investor record (the UAT tenant has one seeded investor,
+PAN `HYMPM6020H`, mobile `8923890294`).
+
+---
+
+## 1a. Data that genuinely isn't available
+
+The Tarrakki tenant this app is provisioned against serves the fund **catalogue** but masks
+per-fund analytics. The following are **not available** and render as an em-dash rather than
+an invented number:
+
+riskometer · expense ratio · NAV history (so no performance chart) · 1-day NAV change ·
+star ratings · 5Y returns · fund manager · benchmark · exit load · lock-in · sector
+allocation · top holdings · category-average returns
+
+This is deliberate. The earlier prototype filled these with plausible-looking sample values
+— hardcoded sector splits, a fake "category average" computed as 86% of the fund's own
+return, a synthetic XIRR of `returnPct × 1.18`, and static NIFTY/SENSEX levels. Fabricated
+figures on an investing screen are worse than a blank, so they were removed rather than
+carried over. What *is* shown — NAV, 6M/1Y/3Y returns, AUM, minimums, order limits — is real.
+
+See [`../backend/README.md`](../backend/README.md) for exactly which upstream fields are
+masked.
 
 ---
 
@@ -101,8 +139,8 @@ Identity + KYC-verified badge, account rows, full **KYC details** (address, occu
 
 ### Cross-cutting
 - **Notifications** ([`Notifications.tsx`](app/screens/Notifications.tsx)) — order / SIP / NAV / KYC alerts, some derived from live state.
-- **Toasts** ([`Toasts.tsx`](app/components/Toasts.tsx)) — feedback for every mock action.
-- All "server actions" are `setTimeout` + a state change.
+- **Toasts** ([`Toasts.tsx`](app/components/Toasts.tsx)) — feedback for every action, including surfacing upstream error messages verbatim.
+- Every action is a real API call. Failures leave you on the form with the reason shown; the success screen is only reached once upstream confirms.
 
 ---
 
@@ -116,9 +154,9 @@ app/
   globals.css           # flat design system + all component styles
   lib/
     types.ts            # Fund, Holding, Order, SIP, User, Watchlist, WalletTxn, AppState…
-    funds.json          # 10 seeded Indian mutual funds
-    store.tsx           # context store: router + state + all actions, localStorage
-    format.ts           # ₹ / NAV / % / units / folio formatting
+    api.ts              # typed backend client + wire types + session token
+    store.tsx           # context store: router + state + all actions, backed by the API
+    format.ts           # ₹ / NAV / % / units / folio formatting (+ null-safe *Or variants)
   components/            # Mark, Device (status bar/home indicator), BottomTabs,
                          # Chart, Sparkline, RiskMeter, AmcLogo, icons, ui,
                          # InvestSheet, SipCalculator, WatchlistSheet, AddFundsSheet,
@@ -127,20 +165,44 @@ app/
   info/                 # risips brand sheet (HTML)
 ```
 
-### Data model (in-memory, persisted to `localStorage`)
-`AppState` = `{ user, onboarded, holdings[], orders[], sips[], watchlists[], cart[], wallet, walletTxns[], notificationsSeen }`, mutated locally on invest / redeem / add-money / watchlist / cart actions.
+### Data model
+
+`AppState` = `{ user, onboarded, authenticated, loading, holdings[], orders[], sips[],
+watchlists[], cart[], wallet, walletTxns[], notificationsSeen, unreadNotifications,
+portfolioTotals }`.
+
+Where each slice comes from:
+
+| Slice | Owner |
+| --- | --- |
+| Funds, AMCs | Tarrakki catalogue, mirrored in the backend's Postgres |
+| Investor, KYC, banks, nominees, mandates | Tarrakki, read live |
+| Orders, SIPs, portfolio | Tarrakki, read live — never cached |
+| Watchlists, cart, wallet, notifications | App-owned, in the backend's Postgres |
+
+Funds are keyed by ISIN in the UI (all 5,946 have a unique one) and by Tarrakki fund `id`
+when placing orders. The store keeps a fund cache so screens can still look funds up
+synchronously via `fundByIsin`.
+
+**The wallet is an app-level ledger only — it does not move real money.** Real settlement
+runs through the payments API against the investor's registered bank.
 
 ---
 
-## 5. Demo script
+## 5. Walkthrough
 
-1. **Splash → Get started** → walk the 11-step onboarding (draw the signature, run the face scan, link a UPI app) → "You're all set".
-2. **Home** → note the portfolio sparkline, market ticker, and wallet balance.
-3. Open a **fund** → show the chart, risk-o-meter, and SIP calculator → **heart** it into a watchlist.
-4. **Add to cart** a couple of funds → **Cart** → check out **from risips Balance** (instant, no UPI).
-5. **Orders** → open an order → watch **Pending → Allotted** on the timeline.
-6. **Portfolio** → returns in green → **Redeem** flow.
-7. Close: _"This exact UI plugs into real MF APIs in the build phase — nothing here is throwaway."_
+1. **Splash → I already have an account** → enter the registered mobile → the OTP screen
+   shows the **DEV CODE** → verify → enter PAN to link the Tarrakki investor.
+2. **Home** → largest funds by AUM, real 3Y returns, live wallet balance.
+3. **Explore** → search the full ~5,900-fund catalogue server-side; filter by real
+   categories (Equity / Debt / Hybrid / Commodity / Global); sort by 3Y, 1Y or fund size.
+4. Open a **fund** → real NAV, trailing returns, AUM, ISIN and live order limits pulled from
+   the AMC's restrictions → **heart** it into a watchlist.
+5. **Invest** → the sheet enforces the fund's real minimum, real SIP dates, and disables SIP
+   entirely on funds that don't accept it.
+6. **Orders** → real upstream orders with their actual status; units appear once the AMC
+   allots them.
+7. **Portfolio** → holdings and returns straight from Tarrakki.
 
 ---
-*risips · investor prototype · an Arthasuta platform. Mutual fund investments are subject to market risks.*
+*risips · an Arthasuta platform. Mutual fund investments are subject to market risks.*

@@ -1,7 +1,7 @@
 "use client";
 
 import { useStore } from "../lib/store";
-import { inr, units as fmtUnits } from "../lib/format";
+import { inrOr, unitsOr } from "../lib/format";
 import type { Order } from "../lib/types";
 
 function statusClass(s: Order["status"]) {
@@ -37,7 +37,8 @@ export function Orders() {
         ) : (
           <>
             <div className="lab" style={{ padding: "6px 0 10px" }}>
-              Pending orders update to Allotted automatically
+              {orders.length} order{orders.length === 1 ? "" : "s"} · units are credited once
+              the AMC allots them
             </div>
             <div className="card divide" style={{ padding: "0 16px" }}>
               {orders.map((o) => (
@@ -81,10 +82,10 @@ export function Orders() {
                   <span className="col gap4" style={{ alignItems: "flex-end" }}>
                     <span className="mono" style={{ fontSize: 15, fontWeight: 500 }}>
                       {o.kind === "Redeem" ? "−" : ""}
-                      {inr(o.amount)}
+                      {inrOr(o.amount)}
                     </span>
                     <span className="mono muted" style={{ fontSize: 12 }}>
-                      {fmtUnits(o.units)} units
+                      {unitsOr(o.units)} units
                     </span>
                   </span>
                 </button>

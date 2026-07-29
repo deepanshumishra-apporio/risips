@@ -1,170 +1,144 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
 import { Wordmark } from "../components/Mark";
 import { Spinner } from "../components/ui";
-import {
-  ChevronLeft,
-  FaceIdIcon,
-  CheckIcon,
-  ShieldCheck,
-} from "../components/icons";
+import { ChevronLeft, ShieldCheck } from "../components/icons";
 
-type Phase = "choose" | "scan" | "phone" | "otp";
+// Real login against the backend: mobile → 6-digit OTP → (first time) link the Tarrakki
+// investor by PAN. The old screen accepted "any 4 digits" and logged into a seeded user.
 
-function maskPhone(phone: string) {
-  const d = phone.replace(/\D/g, "");
-  if (d.length !== 10) return `+91 ${phone}`;
-  return `+91 ••••• ${d.slice(5)}`;
-}
+type Phase = "phone" | "otp" | "pan";
+
+const OTP_LEN = 6;
+const RESEND_SECONDS = 30;
 
 export function Login() {
-  const { state, back, completeOnboarding, switchTab } = useStore();
-  const { user } = state;
-  const initials = user.name.split(" ").map((w) => w[0]).join("").slice(0, 2);
+  const { back, switchTab, requestOtp, verifyOtp, linkInvestor, state, toast } = useStore();
 
-  const [phase, setPhase] = useState<Phase>("choose");
+  const [phase, setPhase] = useState<Phase>("phone");
   const [phone, setPhone] = useState("");
-  const [digits, setDigits] = useState(["", "", "", ""]);
+  const [digits, setDigits] = useState<string[]>(Array(OTP_LEN).fill(""));
+  const [pan, setPan] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [devCode, setDevCode] = useState<string | null>(null);
+  const [cooldown, setCooldown] = useState(0);
   const refs = useRef<(HTMLInputElement | null)[]>([]);
 
-  function finish() {
-    completeOnboarding(); // marks the account signed-in; user is already seeded
-    switchTab("home");
-  }
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
 
-  function scan() {
-    setPhase("scan");
-    setTimeout(finish, 1600);
-  }
+  const digitsOnly = phone.replace(/\D/g, "");
+  const phoneValid = /^[6-9]\d{9}$/.test(digitsOnly);
+  const panValid = /^[A-Z]{5}\d{4}[A-Z]$/.test(pan.toUpperCase());
 
-  function setAt(i: number, v: string) {
-    const c = v.replace(/\D/g, "").slice(-1);
-    const nx = [...digits];
-    nx[i] = c;
-    setDigits(nx);
-    if (c && i < 3) refs.current[i + 1]?.focus();
-    if (i === 3 && c && nx.every(Boolean)) {
-      setBusy(true);
-      setTimeout(finish, 800);
+  async function sendOtp() {
+    if (!phoneValid || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { devCode } = await requestOtp(digitsOnly);
+      setDevCode(devCode ?? null);
+      setDigits(Array(OTP_LEN).fill(""));
+      setPhase("otp");
+      setCooldown(RESEND_SECONDS);
+      setTimeout(() => refs.current[0]?.focus(), 50);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't send the code.");
+    } finally {
+      setBusy(false);
     }
   }
 
-  const phoneValid = phone.replace(/\D/g, "").length === 10;
+  async function submitOtp(code: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await verifyOtp(digitsOnly, code);
+      // A user with no linked investor still needs their PAN before they can transact.
+      setPhase("pan");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't verify the code.");
+      setDigits(Array(OTP_LEN).fill(""));
+      refs.current[0]?.focus();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Once the session resolves, skip the PAN step for an already-linked investor.
+  useEffect(() => {
+    if (phase === "pan" && state.onboarded) {
+      switchTab("home");
+    }
+  }, [phase, state.onboarded, switchTab]);
+
+  function setAt(i: number, v: string) {
+    // `v` can carry more than one digit: SMS autofill drops the whole code into the first
+    // box, and fast typing can outrun the focus advance. Spread it across the boxes.
+    const incoming = v.replace(/\D/g, "");
+    if (!incoming) {
+      const nx = [...digits];
+      nx[i] = "";
+      setDigits(nx);
+      return;
+    }
+
+    const nx = [...digits];
+    let cursor = i;
+    for (const ch of incoming) {
+      if (cursor >= OTP_LEN) break;
+      nx[cursor] = ch;
+      cursor++;
+    }
+    setDigits(nx);
+
+    const next = Math.min(cursor, OTP_LEN - 1);
+    refs.current[next]?.focus();
+    if (nx.every(Boolean)) void submitOtp(nx.join(""));
+  }
+
+  function onPaste(e: React.ClipboardEvent) {
+    const text = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, OTP_LEN);
+    if (text.length < OTP_LEN) return;
+    e.preventDefault();
+    const nx = text.split("");
+    setDigits(nx);
+    void submitOtp(text);
+  }
+
+  async function submitPan() {
+    if (!panValid || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await linkInvestor(pan.toUpperCase());
+      toast("Account linked");
+      switchTab("home");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't link that PAN.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="screen animate-in">
       <div className="safe-top" />
       <div className="backbar">
-        <button className="iconbtn" onClick={back}>
+        <button
+          className="iconbtn"
+          onClick={() => (phase === "phone" ? back() : setPhase("phone"))}
+        >
           <ChevronLeft size={22} />
         </button>
         <Wordmark size={16} />
       </div>
-
-      {/* CHOOSE — returning user */}
-      {phase === "choose" && (
-        <>
-          <div className="scroll pad">
-            <div className="display" style={{ fontSize: 26, marginTop: 8 }}>
-              Welcome back
-            </div>
-            <div className="muted mt8">Log in to your risips account.</div>
-
-            <div className="card card-lg mt24 rowc gap12">
-              <span className="amc" style={{ width: 48, height: 48, fontSize: 17 }}>
-                {initials}
-              </span>
-              <div className="col gap4" style={{ minWidth: 0 }}>
-                <span className="h-sora" style={{ fontSize: 15 }}>
-                  {user.name}
-                </span>
-                <span className="mono muted" style={{ fontSize: 12.5 }}>
-                  {maskPhone(user.phone)}
-                </span>
-              </div>
-            </div>
-
-            {user.biometricEnabled && (
-              <button
-                className="card mt16 rowc gap12"
-                style={{ width: "100%", textAlign: "left" }}
-                onClick={scan}
-              >
-                <span
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 12,
-                    background: "var(--ink)",
-                    color: "var(--paper)",
-                    display: "grid",
-                    placeItems: "center",
-                    flex: "0 0 auto",
-                  }}
-                >
-                  <FaceIdIcon size={20} />
-                </span>
-                <span className="grow col gap4">
-                  <span className="h-sora" style={{ fontSize: 14 }}>
-                    Unlock with Face ID
-                  </span>
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    Fastest way in
-                  </span>
-                </span>
-              </button>
-            )}
-
-            <div
-              className="rowc gap8 mt24"
-              style={{ justifyContent: "center", color: "var(--mute)", fontSize: 12 }}
-            >
-              <ShieldCheck size={14} /> Secured · SEBI-registered platform
-            </div>
-          </div>
-
-          <div className="sticky-cta" style={{ borderTop: "none", flexDirection: "column", gap: 4 }}>
-            {user.biometricEnabled ? (
-              <button className="btn btn-ink btn-block" onClick={scan}>
-                <FaceIdIcon size={18} /> Unlock with Face ID
-              </button>
-            ) : (
-              <button
-                className="btn btn-ink btn-block"
-                onClick={() => setPhase("phone")}
-              >
-                Log in with OTP
-              </button>
-            )}
-            <button
-              className="btn btn-block"
-              style={{ background: "transparent" }}
-              onClick={() => {
-                setPhone("");
-                setPhase("phone");
-              }}
-            >
-              {user.biometricEnabled ? "Use OTP instead" : "Use a different number"}
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* SCAN — biometric */}
-      {phase === "scan" && (
-        <div className="grow col pad" style={{ justifyContent: "center", alignItems: "center", textAlign: "center" }}>
-          <div className="face-ring scan">
-            <FaceIdIcon size={72} />
-            <span className="face-scanline" />
-          </div>
-          <div className="rowc gap8 mt24">
-            <Spinner dark /> <span className="muted">Authenticating…</span>
-          </div>
-        </div>
-      )}
 
       {/* PHONE */}
       {phase === "phone" && (
@@ -173,9 +147,7 @@ export function Login() {
             <div className="display" style={{ fontSize: 26, marginTop: 8 }}>
               Log in with OTP
             </div>
-            <div className="muted mt8">
-              Enter your registered mobile number.
-            </div>
+            <div className="muted mt8">Enter your registered mobile number.</div>
             <div className="prefix-field" style={{ marginTop: 20 }}>
               <span
                 className="pf"
@@ -199,17 +171,30 @@ export function Login() {
                   const x = e.target.value.replace(/\D/g, "").slice(0, 10);
                   setPhone(x.length > 5 ? `${x.slice(0, 5)} ${x.slice(5)}` : x);
                 }}
-                onKeyDown={(e) => e.key === "Enter" && phoneValid && setPhase("otp")}
+                onKeyDown={(e) => e.key === "Enter" && void sendOtp()}
               />
+            </div>
+
+            {error && (
+              <div className="red mt12" style={{ fontSize: 13 }}>
+                {error}
+              </div>
+            )}
+
+            <div
+              className="rowc gap8 mt24"
+              style={{ justifyContent: "center", color: "var(--mute)", fontSize: 12 }}
+            >
+              <ShieldCheck size={14} /> Secured · SEBI-registered platform
             </div>
           </div>
           <div className="sticky-cta" style={{ borderTop: "none" }}>
             <button
               className="btn btn-ink btn-block"
-              disabled={!phoneValid}
-              onClick={() => setPhase("otp")}
+              disabled={!phoneValid || busy}
+              onClick={() => void sendOtp()}
             >
-              Send OTP
+              {busy ? <Spinner /> : "Send OTP"}
             </button>
           </div>
         </>
@@ -221,12 +206,19 @@ export function Login() {
           <div className="display" style={{ fontSize: 26, marginTop: 8 }}>
             Verify it&apos;s you
           </div>
-          <div className="muted mt8">
-            Enter the code sent to +91 {phone || maskPhone(user.phone)}.{" "}
-            <span className="green" style={{ fontWeight: 500 }}>
-              (any 4 digits)
-            </span>
-          </div>
+          <div className="muted mt8">Enter the {OTP_LEN}-digit code sent to +91 {phone}.</div>
+
+          {devCode && (
+            // Development convenience: with no SMS provider configured the backend returns
+            // the code so the flow is testable. It is never returned in production.
+            <div className="card mt12" style={{ padding: "10px 14px" }}>
+              <span className="lab">Dev code</span>{" "}
+              <span className="mono" style={{ fontSize: 15, letterSpacing: "0.15em" }}>
+                {devCode}
+              </span>
+            </div>
+          )}
+
           <div className="otp" style={{ marginTop: 28 }}>
             {digits.map((dig, i) => (
               <input
@@ -239,29 +231,85 @@ export function Login() {
                 className="box mono"
                 value={dig}
                 disabled={busy}
+                onPaste={onPaste}
                 onChange={(e) => setAt(i, e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Backspace" && !digits[i] && i > 0)
-                    refs.current[i - 1]?.focus();
+                  if (e.key === "Backspace" && !digits[i] && i > 0) refs.current[i - 1]?.focus();
                 }}
               />
             ))}
           </div>
-          <div
-            className="rowc gap8 mt24"
-            style={{ justifyContent: "center", minHeight: 24 }}
-          >
+
+          {error && (
+            <div className="red mt16" style={{ fontSize: 13, textAlign: "center" }}>
+              {error}
+            </div>
+          )}
+
+          <div className="rowc gap8 mt24" style={{ justifyContent: "center", minHeight: 24 }}>
             {busy ? (
               <>
                 <Spinner dark /> <span className="muted">Logging in…</span>
               </>
-            ) : (
+            ) : cooldown > 0 ? (
               <span className="muted" style={{ fontSize: 13 }}>
-                Resend code in 0:24
+                Resend code in 0:{String(cooldown).padStart(2, "0")}
               </span>
+            ) : (
+              <button className="lab" onClick={() => void sendOtp()}>
+                Resend code
+              </button>
             )}
           </div>
         </div>
+      )}
+
+      {/* PAN — link the Tarrakki investor */}
+      {phase === "pan" && (
+        <>
+          <div className="scroll pad">
+            <div className="display" style={{ fontSize: 26, marginTop: 8 }}>
+              Link your PAN
+            </div>
+            <div className="muted mt8">
+              We&apos;ll fetch your investor profile and KYC status against this PAN.
+            </div>
+            <div className="prefix-field" style={{ marginTop: 20 }}>
+              <input
+                autoFocus
+                placeholder="ABCDE1234F"
+                className="mono"
+                value={pan}
+                maxLength={10}
+                style={{ textTransform: "uppercase", letterSpacing: "0.08em" }}
+                onChange={(e) => setPan(e.target.value.toUpperCase().slice(0, 10))}
+                onKeyDown={(e) => e.key === "Enter" && void submitPan()}
+              />
+            </div>
+
+            {error && (
+              <div className="red mt12" style={{ fontSize: 13 }}>
+                {error}
+              </div>
+            )}
+          </div>
+          <div className="sticky-cta" style={{ borderTop: "none", flexDirection: "column", gap: 4 }}>
+            <button
+              className="btn btn-ink btn-block"
+              disabled={!panValid || busy}
+              onClick={() => void submitPan()}
+            >
+              {busy ? <Spinner /> : "Link account"}
+            </button>
+            <button
+              className="btn btn-block"
+              style={{ background: "transparent" }}
+              onClick={() => switchTab("home")}
+            >
+              Skip for now
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

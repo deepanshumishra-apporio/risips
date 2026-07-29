@@ -16,9 +16,15 @@ export function inr2(amount: number): string {
   );
 }
 
-/** Compact ₹ for AUM. e.g. 63840 (cr) → "₹63,840 Cr" */
+/** Compact ₹ for AUM. e.g. 63840.12 (cr) → "₹63,840 Cr", 4.317 → "₹4.32 Cr" */
 export function crore(cr: number): string {
-  return "₹" + cr.toLocaleString("en-IN") + " Cr";
+  // Upstream reports AUM to 4 decimals; that precision is noise at crore scale.
+  const digits = Math.abs(cr) >= 100 ? 0 : 2;
+  return (
+    "₹" +
+    cr.toLocaleString("en-IN", { minimumFractionDigits: digits, maximumFractionDigits: digits }) +
+    " Cr"
+  );
 }
 
 /** NAV to four decimals, mono column style. */
@@ -44,6 +50,22 @@ export function units(value: number): string {
     maximumFractionDigits: 3,
   });
 }
+
+/* --------------------------- nullable variants ---------------------------- */
+// The Tarrakki tenant this app runs against does not expose every fund metric (riskometer,
+// expense ratio, NAV history, 1-day change, ratings). Those arrive as null rather than an
+// invented number, so render paths need a consistent "no data" form.
+
+/** What we show when a figure genuinely isn't available. */
+export const DASH = "—";
+
+export const inrOr = (v: number | null | undefined) => (v == null ? DASH : inr(v));
+export const inr2Or = (v: number | null | undefined) => (v == null ? DASH : inr2(v));
+export const croreOr = (v: number | null | undefined) => (v == null ? DASH : crore(v));
+export const navOr = (v: number | null | undefined) => (v == null ? DASH : nav(v));
+export const pctOr = (v: number | null | undefined) => (v == null ? DASH : pct(v));
+export const unitsOr = (v: number | null | undefined) => (v == null ? DASH : units(v));
+export const textOr = (v: string | null | undefined) => (v && v.trim() ? v : DASH);
 
 /** Deterministic-ish folio number from an isin (no randomness in render). */
 export function folioFor(isin: string): string {

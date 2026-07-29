@@ -55,7 +55,7 @@ export function Cart() {
 
             <div className="col gap12">
               {items.map(({ item, fund }) => {
-                const min = fund.minLumpsum;
+                const min = fund.minLumpsum ?? STEP;
                 return (
                   <div key={item.isin} className="card">
                     <div className="rowc gap12">
@@ -73,7 +73,8 @@ export function Cart() {
                             {fund.name}
                           </span>
                           <span className="muted" style={{ fontSize: 12 }}>
-                            {fund.category} · NAV ₹{fund.nav.toFixed(2)}
+                            {fund.category}
+                            {fund.nav != null ? ` · NAV ₹${fund.nav.toFixed(2)}` : ""}
                           </span>
                         </span>
                       </button>

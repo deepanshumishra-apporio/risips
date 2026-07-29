@@ -1,18 +1,32 @@
 "use client";
 
-// In-memory app store + a lightweight screen router (context state machine).
-// No backend: every "server action" is a setTimeout + state change.
+// App store + a lightweight screen router (context state machine).
+//
+// All data comes from the backend (see ../../backend), which brokers the Tarrakki API.
+// Actions call the API and then refresh the affected slice, so what the UI shows is what
+// the upstream actually recorded — no optimistic invention of orders or holdings.
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
-  useCallback,
   type ReactNode,
 } from "react";
-import fundsData from "./funds.json";
+import {
+  api,
+  ApiError,
+  getToken,
+  setToken,
+  toFund,
+  type FundConstraints,
+  type FundDTO,
+  type OrderDTO,
+  type SipDTO,
+} from "./api";
 import type {
   AppState,
   Fund,
@@ -24,11 +38,25 @@ import type {
   Watchlist,
   WalletTxn,
 } from "./types";
-import { folioFor } from "./format";
 
-export const FUNDS = fundsData as Fund[];
-export const fundByIsin = (isin: string) =>
-  FUNDS.find((f) => f.isin === isin);
+/* ----------------------------- fund cache -------------------------------- */
+
+// Screens look funds up synchronously by ISIN (11 call sites). Rather than rewrite each
+// one as async, the store keeps a cache that every fetch populates, and `fundByIsin`
+// reads from it. A miss returns undefined, which screens already handle.
+const fundCache = new Map<string, Fund>();
+
+function cacheFunds(dtos: FundDTO[]): Fund[] {
+  const mapped = dtos.map(toFund);
+  for (const f of mapped) {
+    fundCache.set(f.isin, f);
+    fundCache.set(f.id, f);
+  }
+  return mapped;
+}
+
+export const fundByIsin = (isin: string | null | undefined): Fund | undefined =>
+  isin ? fundCache.get(isin) : undefined;
 
 /* ----------------------------- routing ---------------------------------- */
 
@@ -61,13 +89,7 @@ export interface Route {
   params?: Record<string, unknown>;
 }
 
-export const TAB_SCREENS: ScreenName[] = [
-  "home",
-  "explore",
-  "wishlist",
-  "orders",
-  "portfolio",
-];
+export const TAB_SCREENS: ScreenName[] = ["home", "explore", "wishlist", "orders", "portfolio"];
 
 /* --------------------------- invest draft -------------------------------- */
 
@@ -78,99 +100,133 @@ export interface InvestDraft {
   sipDay: number;
 }
 
-/* --------------------------- seed state ---------------------------------- */
+/* ----------------------------- mappers ----------------------------------- */
 
-const PLACED_LABELS = ["Placed today", "Placed today"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-function mkHolding(isin: string, invested: number, gainPct: number): Holding {
-  const f = fundByIsin(isin)!;
-  const current = Math.round(invested * (1 + gainPct / 100));
+function dateLabel(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${String(d.getDate()).padStart(2, "0")} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** Map Tarrakki's order status vocabulary onto the app's. */
+function orderStatus(raw: string, kind: Order["kind"]): Order["status"] {
+  switch (raw?.toLowerCase()) {
+    case "success":
+      return kind === "Redeem" ? "Redeemed" : "Allotted";
+    case "cancelled":
+      return "Cancelled";
+    case "failed":
+    case "rejected":
+      return "Failed";
+    default:
+      return "Pending";
+  }
+}
+
+function orderKind(orderType: string): Order["kind"] {
+  if (orderType === "sell" || orderType === "swp") return "Redeem";
+  if (orderType === "sip") return "SIP";
+  return "One-time";
+}
+
+function toOrder(d: OrderDTO): Order {
+  const kind = orderKind(d.orderType);
+  const fund = fundCache.get(d.fundId);
   return {
-    isin,
-    folio: folioFor(isin),
-    units: +(invested / f.nav).toFixed(3),
-    invested,
-    current,
+    id: d.id,
+    fundId: d.fundId,
+    isin: fund?.isin ?? d.fundId,
+    fundName: d.fundName,
+    kind,
+    amount: d.amount,
+    units: d.units,
+    nav: d.nav,
+    folio: d.folio,
+    status: orderStatus(d.status, kind),
+    rawStatus: d.status,
+    statusRemark: d.statusRemark,
+    date: d.date,
+    placedLabel: dateLabel(d.date),
   };
 }
 
-function seedState(): AppState {
-  // A pre-populated investor so every tab has something to show in the demo.
-  const holdings: Holding[] = [
-    mkHolding("INF109K01Z48", 50000, 12.4),
-    mkHolding("INF090I01569", 24000, 9.1),
-  ];
-  const orders: Order[] = [
-    {
-      id: "ORD90241",
-      isin: "INF109K01Z48",
-      fundName: fundByIsin("INF109K01Z48")!.name,
-      kind: "One-time",
-      amount: 50000,
-      units: holdings[0].units,
-      status: "Allotted",
-      placedAt: 0,
-      placedLabel: "18 Jun 2026",
-    },
-    {
-      id: "ORD90118",
-      isin: "INF090I01569",
-      fundName: fundByIsin("INF090I01569")!.name,
-      kind: "SIP",
-      amount: 2000,
-      units: 24.35,
-      status: "Allotted",
-      placedAt: 0,
-      placedLabel: "05 Jun 2026",
-    },
-  ];
-  const sips: SIP[] = [
-    {
-      id: "SIP5501",
-      isin: "INF090I01569",
-      fundName: fundByIsin("INF090I01569")!.name,
-      amount: 2000,
-      day: 5,
-      nextLabel: "5 Aug 2026",
-      status: "Active",
-    },
-  ];
+function toSip(d: SipDTO): SIP {
+  const fund = fundCache.get(d.fundId);
+  const day = Number(d.startDate?.slice(8, 10)) || 1;
+  const cancelled = d.status?.toLowerCase() === "cancelled";
   return {
-    user: {
-      name: "Aarav Sharma",
-      phone: "98765 43210",
-      pan: "ABCDE1234F",
-      bank: "HDFC Bank ••••4321",
-      kycVerified: true,
-      email: "aarav.sharma@gmail.com",
-      dob: "14 Aug 1994",
-      gender: "Male",
-      address: "402, Sunrise Residency, Sector 54, Gurugram, Haryana 122002",
-      occupation: "Private sector",
-      income: "₹10–25 lakh",
-      nomineeName: "Meera Sharma",
-      nomineeRelation: "Spouse",
-      signatureDone: true,
-      faceVerified: true,
-      biometricEnabled: true,
-      upiApp: "Google Pay",
-    },
-    onboarded: false,
-    holdings,
-    orders,
-    sips,
-    watchlists: [
-      { id: "wl1", name: "My Watchlist", isins: ["INF179K01BE2", "INF109K01Z48"] },
-      { id: "wl2", name: "High growth", isins: ["INF204K01K15", "INF200K01LM6"] },
-    ],
-    cart: [{ isin: "INF204K01K15", amount: 5000 }],
-    wallet: 12500,
-    walletTxns: [
-      { id: "w2", kind: "Invested", amount: 2500, label: "Nippon India Small Cap", when: "14 Jul 2026" },
-      { id: "w1", kind: "Added", amount: 15000, label: "Added via Google Pay", when: "12 Jul 2026" },
-    ],
-    notificationsSeen: false,
+    id: d.id,
+    fundId: d.fundId,
+    isin: fund?.isin ?? d.fundId,
+    fundName: d.fundName,
+    amount: d.amount,
+    frequency: d.frequency,
+    day,
+    startDate: d.startDate,
+    nextLabel: dateLabel(d.startDate),
+    installments: d.installments,
+    status: cancelled ? "Cancelled" : "Active",
   };
+}
+
+function num(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Upstream portfolio rows are loosely typed; pick the fields we need defensively. */
+function toHolding(h: Record<string, unknown>): Holding {
+  const fundId = String(h.fund_id ?? h.fundId ?? "");
+  const fund = fundCache.get(fundId);
+  return {
+    fundId,
+    isin: fund?.isin ?? fundId,
+    fundName: String(h.fund_name ?? h.fundName ?? fund?.name ?? "—"),
+    folio: String(h.folio ?? "—"),
+    units: num(h.units),
+    invested: num(h.invested_amount ?? h.invested),
+    current: num(h.current_value ?? h.current),
+  };
+}
+
+/* --------------------------- empty state --------------------------------- */
+
+const EMPTY_USER: User = {
+  name: "",
+  phone: "",
+  pan: "",
+  bank: "",
+  kycVerified: false,
+  investorId: null,
+  investorStatus: null,
+};
+
+function emptyState(): AppState {
+  return {
+    user: EMPTY_USER,
+    onboarded: false,
+    authenticated: false,
+    loading: true,
+    holdings: [],
+    orders: [],
+    sips: [],
+    watchlists: [],
+    cart: [],
+    wallet: 0,
+    walletTxns: [],
+    notificationsSeen: true,
+    unreadNotifications: 0,
+    portfolioTotals: { invested: 0, current: 0, gain: 0, returnPct: 0 },
+    loadErrors: {},
+  };
+}
+
+/** Turn a failed slice fetch into a message the UI can show verbatim. */
+function sliceError(e: unknown, fallback: string): string {
+  return e instanceof ApiError ? e.message : fallback;
 }
 
 /* --------------------------- context ------------------------------------- */
@@ -187,37 +243,54 @@ interface Store {
   // state
   state: AppState;
 
+  // catalogue
+  /** A browse list (top funds by AUM), loaded once for Home/Explore. */
+  funds: Fund[];
+  fundsLoading: boolean;
+  fundByIsin: (isin: string | null | undefined) => Fund | undefined;
+  searchFunds: (query: string, signal?: AbortSignal) => Promise<Fund[]>;
+  loadFund: (isin: string) => Promise<Fund | undefined>;
+  loadConstraints: (isin: string) => Promise<FundConstraints | null>;
+
   // toasts
   toasts: Toast[];
   toast: (message: string) => void;
 
-  // actions (all mock)
+  // auth
+  requestOtp: (mobile: string) => Promise<{ devCode?: string }>;
+  verifyOtp: (mobile: string, code: string) => Promise<void>;
+  linkInvestor: (pan: string) => Promise<void>;
+  logout: () => Promise<void>;
+  refresh: () => Promise<void>;
+
+  // actions
   completeOnboarding: (patch?: Partial<User>) => void;
-  placeInvestment: (draft: InvestDraft) => Order;
-  redeem: (isin: string, amount: number) => Order;
-  setSipStatus: (id: string, status: SIP["status"]) => void;
-  cancelSip: (id: string) => void;
+  placeInvestment: (draft: InvestDraft) => Promise<Order>;
+  redeem: (isin: string, amount: number) => Promise<Order>;
+  cancelSip: (id: string) => Promise<void>;
+
+  // watchlists
   isWatched: (isin: string) => boolean;
   listsContaining: (isin: string) => string[];
-  createWatchlist: (name: string) => string;
-  renameWatchlist: (id: string, name: string) => void;
-  deleteWatchlist: (id: string) => void;
-  addFundToList: (listId: string, isin: string) => void;
-  removeFundFromList: (listId: string, isin: string) => void;
+  createWatchlist: (name: string) => Promise<string>;
+  renameWatchlist: (id: string, name: string) => Promise<void>;
+  deleteWatchlist: (id: string) => Promise<void>;
+  addFundToList: (listId: string, isin: string) => Promise<void>;
+  removeFundFromList: (listId: string, isin: string) => Promise<void>;
   markNotificationsSeen: () => void;
 
   // cart
-  addToCart: (isin: string, amount: number) => void;
-  removeFromCart: (isin: string) => void;
-  setCartAmount: (isin: string, amount: number) => void;
-  clearCart: () => void;
+  addToCart: (isin: string, amount: number) => Promise<void>;
+  removeFromCart: (isin: string) => Promise<void>;
+  setCartAmount: (isin: string, amount: number) => Promise<void>;
+  clearCart: () => Promise<void>;
   inCart: (isin: string) => boolean;
-  checkoutCart: () => Order[];
+  checkoutCart: () => Promise<Order[]>;
 
   // wallet
-  addMoney: (amount: number) => void;
-  withdrawMoney: (amount: number) => void;
-  spendFromWallet: (amount: number, label: string) => void;
+  addMoney: (amount: number) => Promise<void>;
+  withdrawMoney: (amount: number) => Promise<void>;
+  spendFromWallet: (amount: number, label: string) => Promise<void>;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -228,83 +301,208 @@ export function useStore(): Store {
   return s;
 }
 
-const STORAGE_KEY = "risips.v1";
-const ALLOT_MS = 30_000; // Pending → Allotted after 30s (demo touch)
-
-let orderSeq = 90300;
-const nextOrderId = () => `ORD${orderSeq++}`;
-
-let watchlistSeq = 3;
-const nextWatchlistId = () => `wl${watchlistSeq++}`;
-
-let walletTxnSeq = 100;
-const nextWalletTxnId = () => `w${walletTxnSeq++}`;
+/** Every order-placing call needs a key so a retry can't buy twice. */
+const idempotencyKey = () =>
+  typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `k${Date.now()}${Math.random().toString(36).slice(2)}`;
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [history, setHistory] = useState<Route[]>([{ screen: "splash" }]);
-  const [state, setState] = useState<AppState>(seedState);
+  const [state, setState] = useState<AppState>(emptyState);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [tick, setTick] = useState(0); // forces re-eval of allotment on interval
-  const nowRef = useRef(0);
+  const [funds, setFunds] = useState<Fund[]>([]);
+  const [fundsLoading, setFundsLoading] = useState(true);
   const toastSeq = useRef(0);
-
-  // hydrate from localStorage (demo survives refresh)
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw) as AppState;
-        // merge over seed so fields added in newer versions get defaults
-        setState({ ...seedState(), ...saved });
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
 
   const toast = useCallback((message: string) => {
     const id = ++toastSeq.current;
     setToasts((t) => [...t, { id, message }]);
-    setTimeout(() => {
-      setToasts((t) => t.filter((x) => x.id !== id));
-    }, 2600);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2600);
   }, []);
 
-  // persist
+  /** Surface an API failure to the user instead of failing silently. */
+  const reportError = useCallback(
+    (e: unknown, fallback: string) => {
+      const msg = e instanceof ApiError ? e.message : fallback;
+      toast(msg);
+      return msg;
+    },
+    [toast],
+  );
+
+  /* ------------------------- catalogue bootstrap ------------------------- */
+
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {
-      /* ignore */
+    let cancelled = false;
+    (async () => {
+      try {
+        // A browse slice, largest first — enough for Home and Explore to feel populated
+        // without pulling all 5.9k funds into the client.
+        const res = await api.funds.list({ sort: "aum", limit: 100 });
+        if (cancelled) return;
+        setFunds(cacheFunds(res.results));
+      } catch (e) {
+        if (!cancelled) reportError(e, "Couldn't load funds.");
+      } finally {
+        if (!cancelled) setFundsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reportError]);
+
+  /* ----------------------------- data load ------------------------------- */
+
+  const refresh = useCallback(async () => {
+    if (!getToken()) {
+      setState((s) => ({ ...s, loading: false, authenticated: false }));
+      return;
     }
-  }, [state]);
 
-  // interval: flip pending orders that have aged past ALLOT_MS
-  useEffect(() => {
-    nowRef.current = Date.now();
-    const id = setInterval(() => {
-      nowRef.current = Date.now();
-      setState((prev) => {
-        let changed = false;
-        const orders = prev.orders.map((o) => {
-          if (
-            o.status === "Pending" &&
-            o.placedAt > 0 &&
-            nowRef.current - o.placedAt >= ALLOT_MS
-          ) {
-            changed = true;
-            return { ...o, status: "Allotted" as const };
-          }
-          return o;
-        });
-        return changed ? { ...prev, orders } : prev;
+    try {
+      const me = await api.auth.me();
+
+      // Anything below needs a linked investor; app-owned slices don't.
+      const [watchRes, cartRes, walletRes, notifRes] = await Promise.all([
+        api.app.watchlists().catch(() => ({ results: [] })),
+        api.app.cart().catch(() => ({ results: [], total: 0 })),
+        api.app.wallet().catch(() => ({ balance: 0, transactions: [] })),
+        api.app.notifications().catch(() => ({ results: [], unread: 0 })),
+      ]);
+
+      let orders: Order[] = [];
+      let sips: SIP[] = [];
+      let holdings: Holding[] = [];
+      let totals = { invested: 0, current: 0, gain: 0, returnPct: 0 };
+      // One slice failing upstream shouldn't blank the whole screen, but it shouldn't look
+      // like "you have no orders" either — record it so the UI can say what didn't load.
+      const loadErrors: AppState["loadErrors"] = {};
+      const noteError = (slice: keyof AppState["loadErrors"]) => (e: unknown) => {
+        loadErrors[slice] = e instanceof Error ? e.message : "Couldn't load this right now.";
+        return null;
+      };
+
+      if (me.user.investorId) {
+        const [ordersRes, sipsRes, portfolioRes] = await Promise.all([
+          api.orders.list().catch(noteError("orders")),
+          api.systematic.sips().catch(noteError("sips")),
+          api.investor.portfolio().catch(noteError("portfolio")),
+        ]);
+
+        const orderRows = ordersRes?.results ?? [];
+        const sipRows = sipsRes?.results ?? [];
+        const holdingRows = portfolioRes?.holdings ?? [];
+
+        // Orders/holdings reference funds by id; make sure those are in the cache so
+        // fundByIsin resolves on the detail screens.
+        const ids = new Set<string>();
+        for (const o of orderRows) ids.add(o.fundId);
+        for (const s of sipRows) ids.add(s.fundId);
+        for (const h of holdingRows) {
+          const id = String((h as Record<string, unknown>).fund_id ?? "");
+          if (id) ids.add(id);
+        }
+        const missing = [...ids].filter((id) => !fundCache.has(id));
+        if (missing.length) {
+          const fetched = await Promise.all(missing.map((id) => api.funds.get(id).catch(() => null)));
+          cacheFunds(fetched.filter((f): f is FundDTO => !!f));
+        }
+
+        orders = orderRows.map(toOrder);
+        sips = sipRows.map(toSip);
+        holdings = holdingRows.map((h) => toHolding(h as Record<string, unknown>));
+        totals = portfolioRes?.totals ?? totals;
+      }
+
+      // Watchlist/cart payloads embed full fund objects — cache them too.
+      cacheFunds(watchRes.results.flatMap((w) => w.funds));
+      cacheFunds(cartRes.results.map((i) => i.fund));
+
+      const watchlists: Watchlist[] = watchRes.results.map((w) => ({
+        id: w.id,
+        name: w.name,
+        isins: w.funds.map((f) => f.isin ?? f.id),
+      }));
+
+      const walletTxns: WalletTxn[] = walletRes.transactions.map((t) => ({
+        id: t.id,
+        kind: (t.kind as WalletTxn["kind"]) ?? "Added",
+        amount: t.amount,
+        label: t.label,
+        when: dateLabel(t.createdAt),
+      }));
+
+      setState({
+        user: {
+          ...EMPTY_USER,
+          name: me.user.name ?? "",
+          phone: me.user.mobile,
+          pan: me.user.pan ?? "",
+          email: me.user.email ?? undefined,
+          bank: "",
+          kycVerified: me.investorStatus === "ready_to_invest",
+          investorId: me.user.investorId,
+          investorStatus: me.investorStatus,
+          dob: me.investor?.dob,
+          gender: me.investor?.gender,
+          address: me.investor?.address
+            ? [
+                me.investor.address.address_line_1,
+                me.investor.address.address_line_2,
+                me.investor.address.city,
+                me.investor.address.state,
+                me.investor.address.pincode,
+              ]
+                .filter(Boolean)
+                .join(", ")
+            : undefined,
+          occupation: me.investor?.fatca_detail?.occupation,
+          income: me.investor?.fatca_detail?.income_slab,
+        },
+        onboarded: Boolean(me.user.investorId),
+        authenticated: true,
+        loading: false,
+        holdings,
+        orders,
+        sips,
+        watchlists,
+        cart: cartRes.results.map((i) => ({ isin: i.fund.isin ?? i.fund.id, amount: i.amount })),
+        wallet: walletRes.balance,
+        walletTxns,
+        notificationsSeen: notifRes.unread === 0,
+        unreadNotifications: notifRes.unread,
+        portfolioTotals: totals,
+        loadErrors,
       });
-      setTick((t) => t + 1);
-    }, 3000);
-    return () => clearInterval(id);
-  }, []);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        setToken(null);
+        setState({ ...emptyState(), loading: false });
+        return;
+      }
+      reportError(e, "Couldn't load your account.");
+      setState((s) => ({ ...s, loading: false }));
+    }
+  }, [reportError]);
 
-  const route = history[history.length - 1];
+  // Deferred to a macrotask: refresh() sets state on the no-session path, and doing that
+  // synchronously inside the effect body causes a cascading render.
+  useEffect(() => {
+    let cancelled = false;
+    const id = setTimeout(() => {
+      if (!cancelled) void refresh();
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [refresh]);
+
+  /* ------------------------------ routing -------------------------------- */
+
+  const route = history[history.length - 1]!;
   const canBack = history.length > 1;
   const activeTab =
     TAB_SCREENS.find((t) => t === route.screen) ??
@@ -325,357 +523,435 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ? "home"
       : route.screen);
 
-  const go = useCallback(
-    (screen: ScreenName, params?: Record<string, unknown>) => {
-      setHistory((h) => [...h, { screen, params }]);
+  const go = useCallback((screen: ScreenName, params?: Record<string, unknown>) => {
+    setHistory((h) => [...h, { screen, params }]);
+  }, []);
+
+  const switchTab = useCallback((screen: ScreenName) => setHistory([{ screen }]), []);
+  const back = useCallback(() => setHistory((h) => (h.length > 1 ? h.slice(0, -1) : h)), []);
+
+  /* ------------------------------ catalogue ------------------------------ */
+
+  const searchFunds = useCallback(async (query: string, signal?: AbortSignal): Promise<Fund[]> => {
+    const res = await api.funds.list({ q: query || undefined, sort: "aum", limit: 50 }, signal);
+    return cacheFunds(res.results);
+  }, []);
+
+  const loadFund = useCallback(async (isin: string): Promise<Fund | undefined> => {
+    const hit = fundCache.get(isin);
+    if (hit) return hit;
+    try {
+      const dto = await api.funds.get(isin);
+      return cacheFunds([dto])[0];
+    } catch {
+      return undefined;
+    }
+  }, []);
+
+  const loadConstraints = useCallback(async (isin: string): Promise<FundConstraints | null> => {
+    try {
+      const res = await api.funds.constraints(isin);
+      // Fold the SIP minimum back into the cached fund so screens can read fund.minSip.
+      const cached = fundCache.get(isin);
+      if (cached) {
+        const monthly = res.constraints.sip.frequencies.find((f) => f.type === "monthly");
+        cached.minSip = monthly?.minAmount ?? null;
+      }
+      return res.constraints;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  /* -------------------------------- auth --------------------------------- */
+
+  const requestOtp = useCallback(async (mobile: string) => {
+    const res = await api.auth.requestOtp(mobile.replace(/\D/g, ""));
+    return { devCode: res.devCode };
+  }, []);
+
+  const verifyOtp = useCallback(
+    async (mobile: string, code: string) => {
+      const res = await api.auth.verifyOtp(mobile.replace(/\D/g, ""), code);
+      setToken(res.token);
+      await refresh();
     },
-    []
+    [refresh],
   );
 
-  const switchTab = useCallback((screen: ScreenName) => {
-    // tabs reset the stack to that tab root
-    setHistory([{ screen }]);
+  const linkInvestor = useCallback(
+    async (pan: string) => {
+      await api.investor.link(pan.trim().toUpperCase());
+      await refresh();
+    },
+    [refresh],
+  );
+
+  const logout = useCallback(async () => {
+    await api.auth.logout().catch(() => {});
+    setToken(null);
+    fundCache.clear();
+    setState({ ...emptyState(), loading: false });
+    setHistory([{ screen: "login" }]);
   }, []);
 
-  const back = useCallback(() => {
-    setHistory((h) => (h.length > 1 ? h.slice(0, -1) : h));
-  }, []);
+  /* ------------------------------- actions -------------------------------- */
 
   const completeOnboarding = useCallback((patch?: Partial<User>) => {
-    setState((prev) => ({
-      ...prev,
-      onboarded: true,
-      user: { ...prev.user, ...patch, kycVerified: true },
-    }));
+    // Upstream owns KYC state; this only reflects locally-collected profile bits.
+    setState((prev) => ({ ...prev, user: { ...prev.user, ...patch } }));
   }, []);
 
-  const placeInvestment = useCallback((draft: InvestDraft): Order => {
-    const f = fundByIsin(draft.isin)!;
-    const boughtUnits = +(draft.amount / f.nav).toFixed(3);
-    // fresh money is marked to today's 1-day NAV move (not flat)
-    const marked = Math.round(draft.amount * (1 + f.navChange / 100));
-    const order: Order = {
-      id: nextOrderId(),
-      isin: draft.isin,
-      fundName: f.name,
-      kind: draft.mode,
-      amount: draft.amount,
-      units: boughtUnits,
-      status: "Pending",
-      placedAt: Date.now(),
-      placedLabel: "Placed just now",
-    };
+  const placeInvestment = useCallback(
+    async (draft: InvestDraft): Promise<Order> => {
+      const fund = fundCache.get(draft.isin);
+      if (!fund) throw new Error("Fund not found");
 
-    setState((prev) => {
-      // add/merge holding immediately so the portfolio reflects it
-      const existing = prev.holdings.find((h) => h.isin === draft.isin);
-      let holdings: Holding[];
-      if (existing) {
-        holdings = prev.holdings.map((h) =>
-          h.isin === draft.isin
-            ? {
-                ...h,
-                units: +(h.units + boughtUnits).toFixed(3),
-                invested: h.invested + draft.amount,
-                current: h.current + marked,
-              }
-            : h
-        );
-      } else {
-        holdings = [
-          ...prev.holdings,
-          {
-            isin: draft.isin,
-            folio: folioFor(draft.isin),
-            units: boughtUnits,
-            invested: draft.amount,
-            current: marked,
-          },
-        ];
-      }
-
-      // if SIP, register it
-      let sips = prev.sips;
       if (draft.mode === "SIP") {
-        sips = [
+        // A SIP needs a registered mandate; pick the investor's first active one.
+        const { results: mandates } = await api.investor.mandates();
+        const mandate = mandates.find((m) => m.status !== "cancelled") ?? mandates[0];
+        if (!mandate) {
+          throw new ApiError(400, "You need a registered bank mandate before starting a SIP.");
+        }
+        const start = new Date();
+        start.setMonth(start.getMonth() + 1);
+        start.setDate(Math.min(draft.sipDay, 28));
+        const startDate = start.toISOString().slice(0, 10);
+
+        await api.orders.sip(
           {
-            id: `SIP${5600 + prev.sips.length}`,
-            isin: draft.isin,
-            fundName: f.name,
+            fund: fund.id,
             amount: draft.amount,
-            day: draft.sipDay,
-            nextLabel: nextSipLabel(draft.sipDay),
-            status: "Active",
+            mandateId: mandate.mandateId,
+            startDate,
+            frequency: "monthly",
           },
-          ...prev.sips,
-        ];
+          idempotencyKey(),
+        );
+        await refresh();
+        // SIPs surface under /sips, not /orders; return a record for the success screen,
+        // which only needs the fund name, amount and start date.
+        return {
+          id: "SIP",
+          fundId: fund.id,
+          isin: fund.isin,
+          fundName: fund.name,
+          kind: "SIP",
+          amount: draft.amount,
+          units: null,
+          nav: null,
+          folio: null,
+          status: "Pending",
+          rawStatus: "pending",
+          statusRemark: null,
+          date: startDate,
+          placedLabel: dateLabel(startDate),
+        };
       }
 
-      return { ...prev, holdings, orders: [order, ...prev.orders], sips };
-    });
+      const res = await api.orders.buy({ fund: fund.id, amount: draft.amount }, idempotencyKey());
+      await refresh();
+      return toOrder(res.order);
+    },
+    [refresh],
+  );
 
-    return order;
-  }, []);
+  const redeem = useCallback(
+    async (isin: string, amount: number): Promise<Order> => {
+      const fund = fundCache.get(isin);
+      if (!fund) throw new Error("Fund not found");
 
-  const redeem = useCallback((isin: string, amount: number): Order => {
-    const f = fundByIsin(isin)!;
-    const soldUnits = +(amount / f.nav).toFixed(3);
-    const order: Order = {
-      id: nextOrderId(),
-      isin,
-      fundName: f.name,
-      kind: "Redeem",
-      amount,
-      units: soldUnits,
-      status: "Pending",
-      placedAt: Date.now(),
-      placedLabel: "Placed just now",
-    };
-    setState((prev) => {
-      const holdings = prev.holdings
-        .map((h) => {
-          if (h.isin !== isin) return h;
-          const ratio = Math.min(1, amount / h.current);
-          const remaining = h.current - amount;
-          if (remaining <= 1) return null; // fully redeemed
-          return {
-            ...h,
-            units: +(h.units * (1 - ratio)).toFixed(3),
-            invested: Math.round(h.invested * (1 - ratio)),
-            current: Math.round(remaining),
-          };
-        })
-        .filter(Boolean) as Holding[];
-      return { ...prev, holdings, orders: [order, ...prev.orders] };
-    });
-    return order;
-  }, []);
+      // Redemption is folio-scoped; find the holding being sold.
+      const holding = state.holdings.find((h) => h.isin === isin || h.fundId === fund.id);
+      if (!holding?.folio || holding.folio === "—") {
+        throw new ApiError(400, "No folio found for this fund — nothing to redeem.");
+      }
 
-  const setSipStatus = useCallback((id: string, status: SIP["status"]) => {
-    setState((prev) => ({
-      ...prev,
-      sips: prev.sips.map((s) => (s.id === id ? { ...s, status } : s)),
-    }));
-  }, []);
+      const res = await api.orders.sell(
+        { fund: fund.id, folio: holding.folio, amount },
+        idempotencyKey(),
+      );
+      await refresh();
+      return toOrder(res.order);
+    },
+    [refresh, state.holdings],
+  );
 
-  const cancelSip = useCallback((id: string) => {
-    setState((prev) => ({
-      ...prev,
-      sips: prev.sips.filter((s) => s.id !== id),
-    }));
-  }, []);
+  const cancelSip = useCallback(
+    async (id: string) => {
+      await api.systematic.cancel(id);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  /* ----------------------------- watchlists ------------------------------- */
 
   const isWatched = useCallback(
     (isin: string) => state.watchlists.some((w) => w.isins.includes(isin)),
-    [state.watchlists]
+    [state.watchlists],
   );
 
   const listsContaining = useCallback(
-    (isin: string) =>
-      state.watchlists.filter((w) => w.isins.includes(isin)).map((w) => w.id),
-    [state.watchlists]
+    (isin: string) => state.watchlists.filter((w) => w.isins.includes(isin)).map((w) => w.id),
+    [state.watchlists],
   );
 
-  const createWatchlist = useCallback((name: string) => {
-    const id = nextWatchlistId();
-    setState((prev) => ({
-      ...prev,
-      watchlists: [...prev.watchlists, { id, name: name.trim(), isins: [] }],
-    }));
-    return id;
-  }, []);
+  const createWatchlist = useCallback(
+    async (name: string) => {
+      const res = await api.app.createWatchlist(name.trim());
+      await refresh();
+      return res.id;
+    },
+    [refresh],
+  );
 
-  const renameWatchlist = useCallback((id: string, name: string) => {
-    setState((prev) => ({
-      ...prev,
-      watchlists: prev.watchlists.map((w) =>
-        w.id === id ? { ...w, name: name.trim() } : w
-      ),
-    }));
-  }, []);
+  const renameWatchlist = useCallback(
+    async (id: string, name: string) => {
+      await api.app.renameWatchlist(id, name.trim());
+      await refresh();
+    },
+    [refresh],
+  );
 
-  const deleteWatchlist = useCallback((id: string) => {
-    setState((prev) => ({
-      ...prev,
-      watchlists: prev.watchlists.filter((w) => w.id !== id),
-    }));
-  }, []);
+  const deleteWatchlist = useCallback(
+    async (id: string) => {
+      await api.app.deleteWatchlist(id);
+      await refresh();
+    },
+    [refresh],
+  );
 
-  const addFundToList = useCallback((listId: string, isin: string) => {
-    setState((prev) => ({
-      ...prev,
-      watchlists: prev.watchlists.map((w) =>
-        w.id === listId && !w.isins.includes(isin)
-          ? { ...w, isins: [isin, ...w.isins] }
-          : w
-      ),
-    }));
-  }, []);
+  const addFundToList = useCallback(
+    async (listId: string, isin: string) => {
+      // Optimistic: watchlist membership drives a heart icon; a wrong flash is cheap and
+      // refresh() reconciles. Money-moving actions above deliberately do not do this.
+      setState((prev) => ({
+        ...prev,
+        watchlists: prev.watchlists.map((w) =>
+          w.id === listId && !w.isins.includes(isin) ? { ...w, isins: [isin, ...w.isins] } : w,
+        ),
+      }));
+      try {
+        await api.app.addToWatchlist(listId, isin);
+      } catch (e) {
+        reportError(e, "Couldn't add to watchlist.");
+      }
+      await refresh();
+    },
+    [refresh, reportError],
+  );
 
-  const removeFundFromList = useCallback((listId: string, isin: string) => {
-    setState((prev) => ({
-      ...prev,
-      watchlists: prev.watchlists.map((w) =>
-        w.id === listId ? { ...w, isins: w.isins.filter((x) => x !== isin) } : w
-      ),
-    }));
-  }, []);
+  const removeFundFromList = useCallback(
+    async (listId: string, isin: string) => {
+      setState((prev) => ({
+        ...prev,
+        watchlists: prev.watchlists.map((w) =>
+          w.id === listId ? { ...w, isins: w.isins.filter((x) => x !== isin) } : w,
+        ),
+      }));
+      try {
+        await api.app.removeFromWatchlist(listId, isin);
+      } catch (e) {
+        reportError(e, "Couldn't remove from watchlist.");
+      }
+      await refresh();
+    },
+    [refresh, reportError],
+  );
 
   const markNotificationsSeen = useCallback(() => {
     setState((prev) =>
-      prev.notificationsSeen ? prev : { ...prev, notificationsSeen: true }
+      prev.notificationsSeen ? prev : { ...prev, notificationsSeen: true, unreadNotifications: 0 },
     );
+    void api.app.markNotificationsSeen().catch(() => {});
   }, []);
 
-  const addToCart = useCallback((isin: string, amount: number) => {
-    setState((prev) =>
-      prev.cart.some((c) => c.isin === isin)
-        ? prev
-        : { ...prev, cart: [{ isin, amount }, ...prev.cart] }
-    );
-  }, []);
+  /* -------------------------------- cart ---------------------------------- */
 
-  const removeFromCart = useCallback((isin: string) => {
-    setState((prev) => ({
-      ...prev,
-      cart: prev.cart.filter((c) => c.isin !== isin),
-    }));
-  }, []);
-
-  const setCartAmount = useCallback((isin: string, amount: number) => {
-    setState((prev) => ({
-      ...prev,
-      cart: prev.cart.map((c) => (c.isin === isin ? { ...c, amount } : c)),
-    }));
-  }, []);
-
-  const clearCart = useCallback(() => {
-    setState((prev) => (prev.cart.length ? { ...prev, cart: [] } : prev));
-  }, []);
-
-  const inCart = useCallback(
-    (isin: string) => state.cart.some((c) => c.isin === isin),
-    [state.cart]
+  const addToCart = useCallback(
+    async (isin: string, amount: number) => {
+      setState((prev) =>
+        prev.cart.some((c) => c.isin === isin) ? prev : { ...prev, cart: [{ isin, amount }, ...prev.cart] },
+      );
+      try {
+        await api.app.setCartItem(isin, amount);
+      } catch (e) {
+        reportError(e, "Couldn't add to cart.");
+        await refresh();
+      }
+    },
+    [refresh, reportError],
   );
 
-  const checkoutCart = useCallback((): Order[] => {
-    const items = state.cart;
-    const placed = items.map((item) =>
-      placeInvestment({
-        isin: item.isin,
-        amount: item.amount,
-        mode: "One-time",
-        sipDay: 5,
-      })
-    );
-    clearCart();
+  const removeFromCart = useCallback(
+    async (isin: string) => {
+      setState((prev) => ({ ...prev, cart: prev.cart.filter((c) => c.isin !== isin) }));
+      try {
+        await api.app.removeCartItem(isin);
+      } catch (e) {
+        reportError(e, "Couldn't remove from cart.");
+        await refresh();
+      }
+    },
+    [refresh, reportError],
+  );
+
+  const setCartAmount = useCallback(
+    async (isin: string, amount: number) => {
+      setState((prev) => ({
+        ...prev,
+        cart: prev.cart.map((c) => (c.isin === isin ? { ...c, amount } : c)),
+      }));
+      try {
+        await api.app.setCartItem(isin, amount);
+      } catch (e) {
+        reportError(e, "Couldn't update the amount.");
+        await refresh();
+      }
+    },
+    [refresh, reportError],
+  );
+
+  const clearCart = useCallback(async () => {
+    setState((prev) => (prev.cart.length ? { ...prev, cart: [] } : prev));
+    await api.app.clearCart().catch(() => {});
+  }, []);
+
+  const inCart = useCallback((isin: string) => state.cart.some((c) => c.isin === isin), [state.cart]);
+
+  const checkoutCart = useCallback(async (): Promise<Order[]> => {
+    const items = [...state.cart];
+    const placed: Order[] = [];
+    const failed: string[] = [];
+
+    // Sequential, not parallel: each is a real order, and a partial failure should stop
+    // rather than fan out more buys.
+    for (const item of items) {
+      const fund = fundCache.get(item.isin);
+      if (!fund) continue;
+      try {
+        const res = await api.orders.buy({ fund: fund.id, amount: item.amount }, idempotencyKey());
+        placed.push(toOrder(res.order));
+        await api.app.removeCartItem(item.isin).catch(() => {});
+      } catch (e) {
+        failed.push(fund.name);
+        reportError(e, `Couldn't place the order for ${fund.name}.`);
+        break;
+      }
+    }
+
+    await refresh();
+    if (failed.length && placed.length) {
+      toast(`${placed.length} order(s) placed; ${failed.length} could not be placed.`);
+    }
     return placed;
-  }, [state.cart, placeInvestment, clearCart]);
+  }, [state.cart, refresh, reportError, toast]);
 
-  const addMoney = useCallback((amount: number) => {
-    setState((prev) => ({
-      ...prev,
-      wallet: prev.wallet + amount,
-      walletTxns: [
-        {
-          id: nextWalletTxnId(),
-          kind: "Added",
-          amount,
-          label: `Added via ${prev.user.upiApp ?? "UPI"}`,
-          when: "Just now",
-        },
-        ...prev.walletTxns,
-      ],
-    }));
-  }, []);
+  /* ------------------------------- wallet --------------------------------- */
 
-  const withdrawMoney = useCallback((amount: number) => {
-    setState((prev) => ({
-      ...prev,
-      wallet: Math.max(0, prev.wallet - amount),
-      walletTxns: [
-        {
-          id: nextWalletTxnId(),
-          kind: "Withdrawn",
-          amount,
-          label: "To HDFC ••••4321",
-          when: "Just now",
-        },
-        ...prev.walletTxns,
-      ],
-    }));
-  }, []);
+  const addMoney = useCallback(
+    async (amount: number) => {
+      try {
+        const res = await api.app.addMoney(amount, "Added to wallet");
+        setState((prev) => ({ ...prev, wallet: res.balance }));
+        await refresh();
+      } catch (e) {
+        reportError(e, "Couldn't add money.");
+      }
+    },
+    [refresh, reportError],
+  );
 
-  const spendFromWallet = useCallback((amount: number, label: string) => {
-    setState((prev) => ({
-      ...prev,
-      wallet: Math.max(0, prev.wallet - amount),
-      walletTxns: [
-        {
-          id: nextWalletTxnId(),
-          kind: "Invested",
-          amount,
-          label,
-          when: "Just now",
-        },
-        ...prev.walletTxns,
-      ],
-    }));
-  }, []);
+  const withdrawMoney = useCallback(
+    async (amount: number) => {
+      try {
+        const res = await api.app.withdraw(amount, "Withdrawn to bank");
+        setState((prev) => ({ ...prev, wallet: res.balance }));
+        await refresh();
+      } catch (e) {
+        reportError(e, "Couldn't withdraw.");
+      }
+    },
+    [refresh, reportError],
+  );
 
-  const value: Store = {
-    route,
-    canBack,
-    activeTab,
-    go,
-    switchTab,
-    back,
-    state,
-    toasts,
-    toast,
-    completeOnboarding,
-    placeInvestment,
-    redeem,
-    setSipStatus,
-    cancelSip,
-    isWatched,
-    listsContaining,
-    createWatchlist,
-    renameWatchlist,
-    deleteWatchlist,
-    addFundToList,
-    removeFundFromList,
-    markNotificationsSeen,
-    addToCart,
-    removeFromCart,
-    setCartAmount,
-    clearCart,
-    inCart,
-    checkoutCart,
-    addMoney,
-    withdrawMoney,
-    spendFromWallet,
-  };
+  const spendFromWallet = useCallback(
+    async (amount: number, label: string) => {
+      try {
+        const res = await api.app.withdraw(amount, label);
+        setState((prev) => ({ ...prev, wallet: res.balance }));
+      } catch (e) {
+        reportError(e, "Couldn't debit the wallet.");
+      }
+    },
+    [reportError],
+  );
 
-  // reference tick so lint keeps the interval-driven re-render meaningful
-  void tick;
+  const value = useMemo<Store>(
+    () => ({
+      route,
+      canBack,
+      activeTab,
+      go,
+      switchTab,
+      back,
+      state,
+      funds,
+      fundsLoading,
+      fundByIsin,
+      searchFunds,
+      loadFund,
+      loadConstraints,
+      toasts,
+      toast,
+      requestOtp,
+      verifyOtp,
+      linkInvestor,
+      logout,
+      refresh,
+      completeOnboarding,
+      placeInvestment,
+      redeem,
+      cancelSip,
+      isWatched,
+      listsContaining,
+      createWatchlist,
+      renameWatchlist,
+      deleteWatchlist,
+      addFundToList,
+      removeFundFromList,
+      markNotificationsSeen,
+      addToCart,
+      removeFromCart,
+      setCartAmount,
+      clearCart,
+      inCart,
+      checkoutCart,
+      addMoney,
+      withdrawMoney,
+      spendFromWallet,
+    }),
+    [
+      route, canBack, activeTab, go, switchTab, back, state, funds, fundsLoading,
+      searchFunds, loadFund, loadConstraints, toasts, toast, requestOtp, verifyOtp,
+      linkInvestor, logout, refresh, completeOnboarding, placeInvestment, redeem, cancelSip,
+      isWatched, listsContaining, createWatchlist, renameWatchlist, deleteWatchlist,
+      addFundToList, removeFundFromList, markNotificationsSeen, addToCart, removeFromCart,
+      setCartAmount, clearCart, inCart, checkoutCart, addMoney, withdrawMoney, spendFromWallet,
+    ],
+  );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 /* --------------------------- derived helpers ----------------------------- */
 
-function nextSipLabel(day: number): string {
-  // demo-fixed reference month so labels are deterministic (no Date.now)
-  return `${day} Aug 2026`;
-}
-
 export function portfolioTotals(holdings: Holding[]) {
   const invested = holdings.reduce((s, h) => s + h.invested, 0);
   const current = holdings.reduce((s, h) => s + h.current, 0);
   const gain = current - invested;
   const returnPct = invested > 0 ? (gain / invested) * 100 : 0;
-  // simple synthetic XIRR, a touch above absolute return
-  const xirr = returnPct > 0 ? returnPct * 1.18 : returnPct;
-  return { invested, current, gain, returnPct, xirr };
+  return { invested, current, gain, returnPct };
 }

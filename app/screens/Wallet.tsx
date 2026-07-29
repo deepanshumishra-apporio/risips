@@ -39,13 +39,16 @@ export function Wallet() {
     setPhase("idle");
   }
 
-  function confirmWithdraw() {
+  async function confirmWithdraw() {
     if (amount <= 0 || amount > bal) return;
     setPhase("processing");
-    setTimeout(() => {
-      withdrawMoney(amount);
+    try {
+      await withdrawMoney(amount);
       setPhase("done");
-    }, 1400);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Withdrawal failed.");
+      setPhase("idle");
+    }
   }
 
   return (

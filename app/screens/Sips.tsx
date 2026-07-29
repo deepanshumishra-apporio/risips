@@ -1,13 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import { fundByIsin, useStore } from "../lib/store";
 import { AmcLogo } from "../components/AmcLogo";
 import { ChevronLeft } from "../components/icons";
 import { inr } from "../lib/format";
 
 export function Sips() {
-  const { state, back, switchTab, setSipStatus, cancelSip, toast } = useStore();
+  const { state, back, switchTab, cancelSip, toast } = useStore();
   const { sips } = state;
+  const [busy, setBusy] = useState<string | null>(null);
 
   return (
     <div className="screen animate-in">
@@ -69,26 +71,30 @@ export function Sips() {
                     </div>
 
                     <div className="hr" style={{ margin: "12px 0" }} />
+                    {/* Tarrakki exposes cancellation for systematic orders but no
+                        pause/resume, so only cancel is offered. */}
                     <div className="rowc gap8">
                       <button
                         className="chip chip-sm grow"
-                        style={{ justifyContent: "center" }}
-                        onClick={() => {
-                          setSipStatus(s.id, paused ? "Active" : "Paused");
-                          toast(paused ? "SIP resumed" : "SIP paused");
+                        style={{
+                          justifyContent: "center",
+                          color: "var(--red)",
+                          borderColor: "var(--line)",
+                        }}
+                        disabled={busy === s.id}
+                        onClick={async () => {
+                          setBusy(s.id);
+                          try {
+                            await cancelSip(s.id);
+                            toast("SIP cancelled");
+                          } catch (e) {
+                            toast(e instanceof Error ? e.message : "Couldn't cancel the SIP.");
+                          } finally {
+                            setBusy(null);
+                          }
                         }}
                       >
-                        {paused ? "Resume" : "Pause"}
-                      </button>
-                      <button
-                        className="chip chip-sm grow"
-                        style={{ justifyContent: "center", color: "var(--red)", borderColor: "var(--line)" }}
-                        onClick={() => {
-                          cancelSip(s.id);
-                          toast("SIP cancelled");
-                        }}
-                      >
-                        Cancel SIP
+                        {busy === s.id ? "Cancelling…" : "Cancel SIP"}
                       </button>
                     </div>
                   </div>

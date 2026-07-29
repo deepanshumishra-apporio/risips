@@ -1,4 +1,15 @@
-// Domain types for the risips prototype. All mock — no backend.
+// Domain types. Backed by the real Tarrakki API via the local backend.
+//
+// Nullability is meaningful here. The Tarrakki tenant this app is provisioned against
+// serves the fund *catalogue* but masks per-fund analytics (riskometer, expense ratio,
+// ratings, manager, benchmark, exit load). Those fields are typed `| null` and render as an
+// em-dash — they are never invented, because a made-up risk rating or return figure on an
+// investing screen would be actively misleading.
+//
+// NAV data is the exception and is fully real: NAV, its day-on-day change, the 5-year return
+// and the chart series all come from AMFI — the official Indian NAV publisher — mirrored by
+// the backend's `nav:sync` job. A fund AMFI does not cover keeps `null`/empty and the UI
+// says so rather than drawing a line.
 
 export type RiskLevel =
   | "Low"
@@ -9,37 +20,59 @@ export type RiskLevel =
   | "Very High";
 
 export interface Fund {
+  /** Tarrakki fund id — required when placing orders. */
+  id: string;
   isin: string;
   name: string;
   amc: string;
   /** two-letter mark shown in the AMC circle */
   amcShort: string;
+  amcLogo: string | null;
   category: string;
-  risk: RiskLevel;
-  nav: number;
-  /** 1-day NAV change in percent */
-  navChange: number;
-  returns: { "1y": number; "3y": number; "5y": number };
-  rating: number;
-  expense: number;
-  aumCr: number;
-  minSip: number;
-  minLumpsum: number;
-  tags: string[];
-  /** ~24 monthly NAV points, oldest → newest */
-  chart: number[];
+  subCategory: string | null;
+  schemeType: string | null;
+  plan: string | null;
+  option: string | null;
 
-  /* --- extended detail --- */
-  objective: string;
-  manager: string;
-  launched: string;
-  benchmark: string;
-  exitLoad: string;
-  lockIn: string;
+  nav: number | null;
+  navDate: string | null;
+  /** AUM in ₹ crore */
+  aumCr: number | null;
+  returns: {
+    "6m": number | null;
+    "1y": number | null;
+    "3y": number | null;
+    /** Annualised from real AMFI history; null for funds with under ~5y of data. */
+    "5y": number | null;
+  };
+  minLumpsum: number | null;
+  minAdditional: number | null;
+  /** Populated lazily from the live constraints endpoint, not the catalogue. */
+  minSip: number | null;
+  tags: string[];
+
+  /* --- real, from AMFI --- */
+  /** Day-on-day NAV change in percent. Null until two observations exist. */
+  navChange: number | null;
+  /** How many real NAV observations back this fund; 0 means AMFI doesn't cover it. */
+  navPoints: number;
+
+  /* --- masked by the current Tarrakki entitlement; always null --- */
+  risk: RiskLevel | null;
+  rating: number | null;
+  expense: number | null;
+  objective: string | null;
+  manager: string | null;
+  launched: string | null;
+  benchmark: string | null;
+  exitLoad: string | null;
+  lockIn: string | null;
 }
 
 export interface Holding {
   isin: string;
+  fundId: string;
+  fundName: string;
   folio: string;
   units: number;
   invested: number;
@@ -47,32 +80,41 @@ export interface Holding {
   current: number;
 }
 
-export type OrderStatus = "Pending" | "Allotted" | "Redeemed";
+export type OrderStatus = "Pending" | "Allotted" | "Redeemed" | "Failed" | "Cancelled";
 export type OrderKind = "One-time" | "SIP" | "Redeem";
 
 export interface Order {
   id: string;
   isin: string;
+  fundId: string;
   fundName: string;
   kind: OrderKind;
-  amount: number;
-  units: number;
+  amount: number | null;
+  units: number | null;
+  nav: number | null;
+  folio: string | null;
   status: OrderStatus;
-  /** epoch ms when placed — drives the Pending→Allotted flip */
-  placedAt: number;
-  /** human date label, precomputed (no Date.now in render paths) */
+  /** raw upstream status, for detail screens */
+  rawStatus: string;
+  statusRemark: string | null;
+  /** ISO date from upstream */
+  date: string;
   placedLabel: string;
 }
 
 export interface SIP {
   id: string;
   isin: string;
+  fundId: string;
   fundName: string;
   amount: number;
-  /** monthly debit day, 1–28 */
+  frequency: string;
+  /** monthly debit day, derived from startDate */
   day: number;
+  startDate: string;
   nextLabel: string;
-  status: "Active" | "Paused";
+  installments: number;
+  status: "Active" | "Paused" | "Cancelled";
 }
 
 export interface User {
@@ -81,6 +123,10 @@ export interface User {
   pan: string;
   bank: string;
   kycVerified: boolean;
+  /** Tarrakki investor id, once linked. */
+  investorId?: string | null;
+  /** Upstream investor status, e.g. "ready_to_invest". */
+  investorStatus?: string | null;
   email?: string;
   dob?: string;
   gender?: string;
@@ -117,18 +163,26 @@ export interface WalletTxn {
 export interface AppState {
   user: User;
   onboarded: boolean;
+  /** true once a session token is present and /me has resolved */
+  authenticated: boolean;
+  loading: boolean;
   holdings: Holding[];
   orders: Order[];
   sips: SIP[];
-  /** user-created named watchlists */
   watchlists: Watchlist[];
-  /** planned one-time investments awaiting checkout */
   cart: CartItem[];
-  /** in-app money balance (₹) usable for investing */
   wallet: number;
   walletTxns: WalletTxn[];
-  /** cleared once the user opens the notifications screen */
   notificationsSeen: boolean;
+  unreadNotifications: number;
+  portfolioTotals: { invested: number; current: number; gain: number; returnPct: number };
+  /**
+   * Per-slice load failures. An empty list plus an error here means "we couldn't fetch
+   * this", which must not be rendered as "you have none" — the upstream order endpoint
+   * does go down, and telling someone they have no orders when they have seventeen is
+   * worse than saying nothing loaded.
+   */
+  loadErrors: { orders?: string; sips?: string; portfolio?: string };
 }
 
 export interface Toast {

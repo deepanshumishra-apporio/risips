@@ -3,7 +3,7 @@
 import { fundByIsin, useStore } from "../lib/store";
 import { AmcLogo } from "../components/AmcLogo";
 import { CheckIcon, ChevronLeft, ChevronRight } from "../components/icons";
-import { inr, nav as fmtNav, units as fmtUnits, folioFor } from "../lib/format";
+import { inrOr, navOr, unitsOr, folioFor } from "../lib/format";
 import type { Order } from "../lib/types";
 
 type StepState = "done" | "active" | "todo";
@@ -103,7 +103,7 @@ function buyTimeline(o: Order) {
         title={allotted ? "Units allotted" : "Units being allotted"}
         sub={
           allotted
-            ? `${fmtUnits(o.units)} units credited`
+            ? `${unitsOr(o.units)} units credited`
             : "In 1–2 working days at today's NAV"
         }
         last
@@ -117,7 +117,7 @@ function redeemTimeline(o: Order) {
   return (
     <>
       <Step state="done" title="Redemption placed" sub={o.placedLabel} />
-      <Step state="done" title="Units sold" sub={`${fmtUnits(o.units)} units at today's NAV`} />
+      <Step state="done" title="Units sold" sub={`${unitsOr(o.units)} units at today's NAV`} />
       <Step
         state={done ? "done" : "active"}
         title={done ? "Amount credited" : "Payout in progress"}
@@ -146,9 +146,9 @@ export function OrderDetail() {
   const rows: { label: string; value: string; mono?: boolean }[] = [
     { label: "Order ID", value: order.id, mono: true },
     { label: "Order type", value: order.kind },
-    { label: isRedeem ? "Redeemed amount" : "Amount", value: inr(order.amount), mono: true },
-    { label: "Units", value: fmtUnits(order.units), mono: true },
-    { label: "NAV", value: fund ? fmtNav(fund.nav) : "—", mono: true },
+    { label: isRedeem ? "Redeemed amount" : "Amount", value: inrOr(order.amount), mono: true },
+    { label: "Units", value: unitsOr(order.units), mono: true },
+    { label: "NAV", value: navOr(fund?.nav), mono: true },
     { label: "Folio no.", value: folioFor(order.isin), mono: true },
     { label: "Placed on", value: order.placedLabel },
     {
@@ -200,7 +200,7 @@ export function OrderDetail() {
               <span className="lab">{isRedeem ? "Amount" : "Invested"}</span>
               <span className="mono" style={{ fontSize: 18, fontWeight: 500 }}>
                 {isRedeem ? "−" : ""}
-                {inr(order.amount)}
+                {inrOr(order.amount)}
               </span>
             </div>
           </div>

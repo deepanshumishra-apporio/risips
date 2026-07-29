@@ -10,7 +10,7 @@ function maskPan(pan: string) {
 }
 
 export function Profile() {
-  const { state, back, switchTab, go } = useStore();
+  const { state, back, switchTab, go, logout } = useStore();
   const { user, holdings, sips } = state;
   const t = portfolioTotals(holdings);
 
@@ -196,7 +196,7 @@ export function Profile() {
 
         <button
           className="btn btn-ghost btn-block mt24"
-          onClick={() => switchTab("home")}
+          onClick={() => void logout()}
         >
           Log out
         </button>

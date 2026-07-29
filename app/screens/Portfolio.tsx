@@ -53,6 +53,8 @@ export function Portfolio() {
             <span className="lab" style={{ color: "#A9A497" }}>
               Current value
             </span>
+            {/* The old XIRR badge was returnPct × 1.18 — a made-up number. Absolute
+                return is what the portfolio data actually supports. */}
             <span
               className="mono"
               style={{
@@ -60,10 +62,10 @@ export function Portfolio() {
                 padding: "3px 8px",
                 borderRadius: 6,
                 background: "#232320",
-                color: "var(--green-rev)",
+                color: t.gain >= 0 ? "var(--green-rev)" : "var(--red)",
               }}
             >
-              XIRR {pct(t.xirr)}
+              {pct(t.returnPct)}
             </span>
           </div>
           <div className="num-hero" style={{ fontSize: 36, color: "var(--paper)", marginTop: 6 }}>

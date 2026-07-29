@@ -47,26 +47,39 @@ export function Payment() {
     ? "Cart checkout"
     : fund!.name;
 
-  function approve() {
+  // Placement is a real upstream call, so failures have to land somewhere the user can
+  // see: on error we surface the message and return to the form rather than routing to a
+  // success screen for an order that was never placed.
+  async function approve() {
+    if (state === "approving") return;
     setState("approving");
-    setTimeout(() => {
+    try {
       if (isAddMoney) {
-        addMoney(amount);
+        await addMoney(amount);
         toast(`${inr(amount)} added to balance`);
         back();
         return;
       }
+
       if (isCart) {
-        if (isWallet) spendFromWallet(amount, `Cart · ${cartCount} funds`);
-        const orders = checkoutCart();
+        const orders = await checkoutCart();
+        if (!orders.length) {
+          setState("idle");
+          return; // checkoutCart already reported why
+        }
+        if (isWallet) await spendFromWallet(amount, `Cart · ${cartCount} funds`);
         go("success", { cart: true, count: orders.length, amount });
-      } else {
-        if (isWallet) spendFromWallet(amount, fund!.name);
-        const draft: InvestDraft = { isin, amount, mode, sipDay };
-        const order = placeInvestment(draft);
-        go("success", { orderId: order.id, isin, amount, mode, sipDay });
+        return;
       }
-    }, isWallet ? 900 : 1500);
+
+      const draft: InvestDraft = { isin, amount, mode, sipDay };
+      const order = await placeInvestment(draft);
+      if (isWallet) await spendFromWallet(amount, fund!.name);
+      go("success", { orderId: order.id, isin, amount, mode, sipDay });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Payment could not be completed.");
+      setState("idle");
+    }
   }
 
   return (

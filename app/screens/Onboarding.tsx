@@ -19,6 +19,9 @@ import {
 
 interface Data {
   phone: string;
+  /** 6-digit login code, held so the OTP step can hand it to the verify call. */
+  devCode: string;
+  pan: string;
   name: string;
   email: string;
   dob: string;
@@ -37,11 +40,13 @@ interface Data {
 
 const DEFAULTS: Data = {
   phone: "",
-  name: "Aarav Sharma",
+  devCode: "",
+  pan: "",
+  name: "",
   email: "",
-  dob: "14 Aug 1994",
-  gender: "Male",
-  address: "402, Sunrise Residency, Sector 54, Gurugram, Haryana 122002",
+  dob: "",
+  gender: "",
+  address: "",
   occupation: "",
   income: "",
   fatca: false,
@@ -106,21 +111,15 @@ export function OnboardWizard() {
   const next = () => setStep((s) => s + 1);
   const goBack = () => (step === 0 ? back() : setStep((s) => s - 1));
 
+  // Identity fields (name, PAN, DOB, email, address) come from the linked Tarrakki
+  // investor record, not from this wizard — `refresh()` has already populated them. Only
+  // the preferences collected here are merged in, and no placeholder values are invented.
   function finish() {
     completeOnboarding({
-      phone: d.phone || "98765 43210",
-      name: d.name,
-      email: d.email || "aarav.sharma@gmail.com",
-      dob: d.dob,
-      gender: d.gender,
-      address: d.address,
-      occupation: d.occupation,
-      income: d.income,
-      nomineeName: d.addNominee ? d.nomName || "Meera Sharma" : "Not added",
-      nomineeRelation: d.addNominee ? d.nomRel : "—",
-      upiApp: d.upiApp || "Google Pay",
-      signatureDone: true,
-      faceVerified: true,
+      nomineeName: d.addNominee && d.nomName ? d.nomName : undefined,
+      nomineeRelation: d.addNominee && d.nomName ? d.nomRel : undefined,
+      upiApp: d.upiApp || undefined,
+      signatureDone: d.signed,
       biometricEnabled: d.biometric,
     });
     switchTab("home");
@@ -198,7 +197,26 @@ function Footer({
 /* ------------------------------ steps ----------------------------------- */
 
 function PhoneStep({ d, set, next }: StepProps) {
-  const valid = d.phone.replace(/\D/g, "").length === 10;
+  const { requestOtp } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const valid = /^[6-9]\d{9}$/.test(d.phone.replace(/\D/g, ""));
+
+  async function send() {
+    if (!valid || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { devCode } = await requestOtp(d.phone.replace(/\D/g, ""));
+      set({ devCode: devCode ?? "" });
+      next();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't send the code.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
       <div className="scroll pad">
@@ -228,40 +246,80 @@ function PhoneStep({ d, set, next }: StepProps) {
             }}
           />
         </div>
+        {error && (
+          <div className="red mt12" style={{ fontSize: 13 }}>
+            {error}
+          </div>
+        )}
         <div className="muted mt16 rowc gap8" style={{ fontSize: 12.5 }}>
           <ShieldCheck size={14} /> 256-bit encrypted · SEBI-registered platform
         </div>
       </div>
-      <Footer label="Continue" disabled={!valid} onClick={next} />
+      <Footer label={busy ? "Sending…" : "Continue"} disabled={!valid || busy} onClick={send} />
     </>
   );
 }
 
+const OTP_LEN = 6;
+
 function OtpStep({ d, next }: StepProps) {
-  const [digits, setDigits] = useState(["", "", "", ""]);
+  const { verifyOtp } = useStore();
+  const [digits, setDigits] = useState<string[]>(Array(OTP_LEN).fill(""));
   const [verifying, setVerifying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const refs = useRef<(HTMLInputElement | null)[]>([]);
 
-  function setAt(i: number, v: string) {
-    const c = v.replace(/\D/g, "").slice(-1);
-    const nx = [...digits];
-    nx[i] = c;
-    setDigits(nx);
-    if (c && i < 3) refs.current[i + 1]?.focus();
-    if (i === 3 && c && nx.every(Boolean)) {
-      setVerifying(true);
-      setTimeout(next, 800);
+  async function submit(code: string) {
+    setVerifying(true);
+    setError(null);
+    try {
+      await verifyOtp(d.phone.replace(/\D/g, ""), code);
+      next();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't verify the code.");
+      setDigits(Array(OTP_LEN).fill(""));
+      refs.current[0]?.focus();
+    } finally {
+      setVerifying(false);
     }
+  }
+
+  // Accepts multi-digit input so SMS autofill (and fast typing) fills the row.
+  function setAt(i: number, v: string) {
+    const incoming = v.replace(/\D/g, "");
+    const nx = [...digits];
+    if (!incoming) {
+      nx[i] = "";
+      setDigits(nx);
+      return;
+    }
+    let cursor = i;
+    for (const ch of incoming) {
+      if (cursor >= OTP_LEN) break;
+      nx[cursor] = ch;
+      cursor++;
+    }
+    setDigits(nx);
+    refs.current[Math.min(cursor, OTP_LEN - 1)]?.focus();
+    if (nx.every(Boolean)) void submit(nx.join(""));
   }
 
   return (
     <div className="scroll pad">
       <div className="muted">
-        Enter the code sent to +91 {d.phone || "your number"}.{" "}
-        <span className="green" style={{ fontWeight: 500 }}>
-          (any 4 digits)
-        </span>
+        Enter the {OTP_LEN}-digit code sent to +91 {d.phone || "your number"}.
       </div>
+
+      {d.devCode && (
+        // No SMS provider is configured in development, so the backend returns the code.
+        <div className="card mt12" style={{ padding: "10px 14px" }}>
+          <span className="lab">Dev code</span>{" "}
+          <span className="mono" style={{ fontSize: 15, letterSpacing: "0.15em" }}>
+            {d.devCode}
+          </span>
+        </div>
+      )}
+
       <div className="otp" style={{ marginTop: 28 }}>
         {digits.map((dig, i) => (
           <input
@@ -276,24 +334,23 @@ function OtpStep({ d, next }: StepProps) {
             disabled={verifying}
             onChange={(e) => setAt(i, e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Backspace" && !digits[i] && i > 0)
-                refs.current[i - 1]?.focus();
+              if (e.key === "Backspace" && !digits[i] && i > 0) refs.current[i - 1]?.focus();
             }}
           />
         ))}
       </div>
-      <div
-        className="rowc gap8 mt24"
-        style={{ justifyContent: "center", minHeight: 24 }}
-      >
-        {verifying ? (
+
+      {error && (
+        <div className="red mt16" style={{ fontSize: 13, textAlign: "center" }}>
+          {error}
+        </div>
+      )}
+
+      <div className="rowc gap8 mt24" style={{ justifyContent: "center", minHeight: 24 }}>
+        {verifying && (
           <>
             <Spinner dark /> <span className="muted">Verifying…</span>
           </>
-        ) : (
-          <span className="muted" style={{ fontSize: 13 }}>
-            Resend code in 0:24
-          </span>
         )}
       </div>
     </div>
@@ -301,18 +358,29 @@ function OtpStep({ d, next }: StepProps) {
 }
 
 function PanStep({ d, set, next }: StepProps) {
-  const [pan, setPan] = useState("");
+  const { linkInvestor, state } = useStore();
+  const [pan, setPan] = useState(d.pan);
   const [phase, setPhase] = useState<"input" | "checking" | "done">("input");
+  const [error, setError] = useState<string | null>(null);
   const valid = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan);
 
-  function check() {
-    if (!valid) return;
+  // Real lookup: link the Tarrakki investor registered against this PAN and show what
+  // actually came back, rather than asserting "KYC verified" after a timer.
+  async function check() {
+    if (!valid || phase === "checking") return;
     setPhase("checking");
-    setTimeout(() => {
-      set({ name: d.name });
+    setError(null);
+    try {
+      await linkInvestor(pan);
+      set({ pan });
       setPhase("done");
-    }, 1200);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't verify that PAN.");
+      setPhase("input");
+    }
   }
+
+  const kycReady = state.user.investorStatus === "ready_to_invest";
 
   if (phase === "done") {
     return (
@@ -325,26 +393,34 @@ function PanStep({ d, set, next }: StepProps) {
             <div className="check-ring">
               <CheckIcon size={44} />
             </div>
-            <div className="display green" style={{ fontSize: 22, marginTop: 20 }}>
-              You&apos;re KYC verified
+            <div
+              className={`display ${kycReady ? "green" : ""}`}
+              style={{ fontSize: 22, marginTop: 20 }}
+            >
+              {kycReady ? "You're ready to invest" : "Account linked"}
             </div>
             <div className="muted mt8 rowc gap8">
-              <ShieldCheck size={15} /> via CVL KRA
+              <ShieldCheck size={15} />{" "}
+              {kycReady ? "KYC verified" : `Status: ${state.user.investorStatus ?? "pending"}`}
             </div>
             <div className="mono muted mt16" style={{ fontSize: 13 }}>
-              PAN {pan}
+              PAN {state.user.pan || pan}
             </div>
             <div className="card mt24" style={{ width: "100%", textAlign: "left" }}>
               <div className="lab" style={{ marginBottom: 4 }}>
-                Fetched from your KYC record
+                From your investor record
               </div>
               <div className="between mt8">
                 <span className="muted" style={{ fontSize: 13 }}>Name</span>
-                <span style={{ fontSize: 13 }}>{d.name}</span>
+                <span style={{ fontSize: 13 }}>{state.user.name || "—"}</span>
               </div>
               <div className="between mt8">
                 <span className="muted" style={{ fontSize: 13 }}>Date of birth</span>
-                <span className="mono" style={{ fontSize: 13 }}>{d.dob}</span>
+                <span className="mono" style={{ fontSize: 13 }}>{state.user.dob || "—"}</span>
+              </div>
+              <div className="between mt8">
+                <span className="muted" style={{ fontSize: 13 }}>Email</span>
+                <span style={{ fontSize: 13 }}>{state.user.email || "—"}</span>
               </div>
             </div>
           </div>
@@ -373,10 +449,15 @@ function PanStep({ d, set, next }: StepProps) {
             setPan(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10))
           }
         />
+        {error && (
+          <div className="red mt12" style={{ fontSize: 13 }}>
+            {error}
+          </div>
+        )}
         <div className="rowc gap8 mt16" style={{ minHeight: 24 }}>
           {phase === "checking" ? (
             <>
-              <Spinner dark /> <span className="muted">Checking KYC with KRA…</span>
+              <Spinner dark /> <span className="muted">Looking up your KYC record…</span>
             </>
           ) : (
             <span className="muted rowc gap8" style={{ fontSize: 13 }}>
