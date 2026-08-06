@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useStore } from "../lib/store";
+import { primaryBank, useStore } from "../lib/store";
+import { api } from "../lib/api";
+import { bankLabel } from "../lib/format";
 import { Spinner } from "../components/ui";
 import {
   CheckIcon,
@@ -33,7 +35,8 @@ interface Data {
   addNominee: boolean;
   nomName: string;
   nomRel: string;
-  upiApp: string;
+  /** Set once POST /api/investor/banks has actually registered an account. */
+  bankRegistered: boolean;
   signed: boolean;
   biometric: boolean;
 }
@@ -53,7 +56,7 @@ const DEFAULTS: Data = {
   addNominee: true,
   nomName: "",
   nomRel: "Spouse",
-  upiApp: "",
+  bankRegistered: false,
   signed: false,
   biometric: false,
 };
@@ -93,13 +96,6 @@ const OCCUPATIONS = [
 ];
 const RELATIONS = ["Spouse", "Parent", "Child", "Sibling", "Other"];
 
-const UPI_APPS = [
-  { name: "GPay", bg: "#1A73E8", mark: "G" },
-  { name: "PhonePe", bg: "#5F259F", mark: "Pe" },
-  { name: "Paytm", bg: "#00BAF2", mark: "P" },
-  { name: "BHIM", bg: "#00806A", mark: "B" },
-];
-
 /* ------------------------------ wrapper --------------------------------- */
 
 export function OnboardWizard() {
@@ -118,7 +114,6 @@ export function OnboardWizard() {
     completeOnboarding({
       nomineeName: d.addNominee && d.nomName ? d.nomName : undefined,
       nomineeRelation: d.addNominee && d.nomName ? d.nomRel : undefined,
-      upiApp: d.upiApp || undefined,
       signatureDone: d.signed,
       biometricEnabled: d.biometric,
     });
@@ -715,163 +710,197 @@ function NomineeStep({ d, set, next }: StepProps) {
   );
 }
 
+/**
+ * Register the investor's bank account.
+ *
+ * This used to be a UPI-app chooser that resolved on a `setTimeout` and then displayed a
+ * hardcoded "HDFC Bank · Savings ••••4321 · verified by ₹1 penny-drop". None of that
+ * happened: no account was registered anywhere, and the account shown was not the user's.
+ *
+ * Tarrakki registers banks by account number + IFSC (POST /api/investor/banks), optionally
+ * with a cancelled cheque or statement — there is no UPI-linking path — so that is what this
+ * collects. Redemption payouts go to whatever is registered here, which is exactly why it
+ * must not be faked.
+ */
 function BankStep({ d, set, next }: StepProps) {
-  const [linking, setLinking] = useState<string | null>(null);
-  const [vpa, setVpa] = useState("");
+  const { state, refresh, toast } = useStore();
+  const [account, setAccount] = useState("");
+  const [confirmAccount, setConfirmAccount] = useState("");
+  const [ifsc, setIfsc] = useState("");
+  const [accountType, setAccountType] = useState<"savings" | "current">("savings");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function link(app: string) {
-    setLinking(app);
-    setTimeout(() => {
-      setLinking(null);
-      set({ upiApp: app });
-    }, 1600);
+  // Already registered upstream (returning user, or a retry after this step succeeded).
+  const existing = primaryBank(state);
+  const registered = d.bankRegistered || !!existing;
+
+  // Mirrors the backend's own validation so the user sees the problem before a round trip.
+  const accountOk = /^\d{6,20}$/.test(account);
+  const confirmOk = confirmAccount === account;
+  const ifscOk = /^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc);
+  const valid = accountOk && confirmOk && ifscOk;
+
+  async function submit() {
+    if (!valid || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.investor.addBank({
+        account_number: account,
+        ifsc,
+        account_type: accountType,
+      });
+      // Pull the registered account back from the server rather than echoing the form —
+      // upstream owns the record, including the masking and any status it assigns.
+      await refresh();
+      set({ bankRegistered: true });
+      toast("Bank account registered");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't register that account.");
+    } finally {
+      setBusy(false);
+    }
   }
-
-  const linked = !!d.upiApp;
-  const vpaValid = /^[\w.\-]{2,}@[a-z]{2,}$/i.test(vpa);
 
   return (
     <>
       <div className="scroll pad">
         <div className="muted" style={{ fontSize: 13.5 }}>
-          Link your bank in seconds via UPI. We verify it with a ₹1 penny-drop
-          (auto-refunded). Redemptions are paid back here.
+          Add the bank account you&rsquo;ll invest from. Redemptions and withdrawals are
+          paid back to this account, so it must be in your own name.
         </div>
 
-        {linked ? (
-          /* ---- verified account ---- */
+        {registered ? (
+          /* ---- registered account, as returned by the server ---- */
           <div className="card card-lg mt16 animate-in">
             <div className="col" style={{ alignItems: "center", textAlign: "center", gap: 8 }}>
               <div className="check-ring" style={{ width: 60, height: 60 }}>
                 <CheckIcon size={28} />
               </div>
               <div className="h-sora green" style={{ fontSize: 16, marginTop: 8 }}>
-                Bank account verified
+                Bank account added
               </div>
               <div className="muted" style={{ fontSize: 12.5 }}>
-                via ₹1 penny-drop · refunded to your account
+                {/* Approval status only comes back from the bank detail endpoint, so the
+                    list gives us null — don't claim "verified" without it. */}
+                {existing?.status
+                  ? `Status: ${existing.status}`
+                  : "Verification is handled by our registrar"}
               </div>
             </div>
-            <div className="hr" style={{ margin: "16px 0" }} />
-            <div className="rowc gap12">
-              <span
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 12,
-                  background: "#E4202B",
-                  color: "#fff",
-                  display: "grid",
-                  placeItems: "center",
-                  fontFamily: "var(--font-sora)",
-                  fontWeight: 700,
-                  fontSize: 18,
-                  flex: "0 0 auto",
-                }}
-              >
-                H
-              </span>
-              <div className="grow col gap4">
-                <span className="h-sora" style={{ fontSize: 15 }}>
-                  HDFC Bank
-                </span>
-                <span className="mono muted" style={{ fontSize: 12 }}>
-                  Savings ••••4321 · linked via {d.upiApp}
-                </span>
-              </div>
-              <button
-                className="lab"
-                onClick={() => {
-                  set({ upiApp: "" });
-                  setVpa("");
-                }}
-              >
-                Change
-              </button>
-            </div>
-          </div>
-        ) : linking ? (
-          /* ---- linking in progress ---- */
-          <div className="card card-lg mt16 animate-in" style={{ textAlign: "center" }}>
-            <div className="col" style={{ alignItems: "center", gap: 12, padding: "12px 0" }}>
-              <span
-                className="ulogo"
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: 16,
-                  background:
-                    UPI_APPS.find((a) => a.name === linking)?.bg ?? "#0E2C54",
-                  color: "#fff",
-                  display: "grid",
-                  placeItems: "center",
-                  fontFamily: "var(--font-sora)",
-                  fontWeight: 700,
-                  fontSize: 22,
-                }}
-              >
-                {UPI_APPS.find((a) => a.name === linking)?.mark ?? "@"}
-              </span>
-              <Spinner dark />
-              <div className="h-sora" style={{ fontSize: 15 }}>
-                Opening {linking}…
-              </div>
-              <div className="muted" style={{ fontSize: 12.5, maxWidth: "26ch" }}>
-                Approve the ₹1 verification request in your UPI app.
-              </div>
-            </div>
+            {existing && (
+              <>
+                <div className="hr" style={{ margin: "16px 0" }} />
+                <div className="rowc gap12">
+                  <span
+                    className="amc"
+                    style={{ width: 44, height: 44, borderColor: "var(--line)" }}
+                  >
+                    {existing.ifsc.slice(0, 1)}
+                  </span>
+                  <div className="grow col gap4" style={{ minWidth: 0 }}>
+                    <span className="h-sora" style={{ fontSize: 15 }}>
+                      {bankLabel(existing)}
+                    </span>
+                    <span className="mono muted" style={{ fontSize: 12 }}>
+                      {existing.accountType} · {existing.ifsc}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         ) : (
-          /* ---- chooser ---- */
+          /* ---- registration form ---- */
           <>
-            <div className="lab" style={{ margin: "20px 0 12px" }}>
-              Choose your UPI app
-            </div>
-            <div className="upi-grid">
-              {UPI_APPS.map((a) => (
-                <button key={a.name} className="upi-tile" onClick={() => link(a.name)}>
-                  <span className="ulogo" style={{ background: a.bg }}>
-                    {a.mark}
-                  </span>
-                  <span className="uname">{a.name.replace(" UPI", "")}</span>
-                </button>
-              ))}
+            <div className="mt16">
+              <div className="lab" style={{ marginBottom: 8 }}>
+                Account type
+              </div>
+              <div className="chiprow" style={{ padding: 0, gap: 8 }}>
+                {(["savings", "current"] as const).map((t) => (
+                  <button
+                    key={t}
+                    className={`chip${accountType === t ? " active" : ""}`}
+                    style={{ textTransform: "capitalize" }}
+                    onClick={() => setAccountType(t)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="or-divider">or enter UPI ID</div>
+            <Field
+              label="Account number"
+              value={account}
+              placeholder="6–20 digits"
+              mono
+              onChange={(v) => setAccount(v.replace(/\D/g, "").slice(0, 20))}
+            />
+            <Field
+              label="Re-enter account number"
+              value={confirmAccount}
+              placeholder="Must match above"
+              mono
+              onChange={(v) => setConfirmAccount(v.replace(/\D/g, "").slice(0, 20))}
+            />
+            {confirmAccount && !confirmOk && (
+              <div className="red mt12" style={{ fontSize: 13 }}>
+                Account numbers don&rsquo;t match.
+              </div>
+            )}
 
-            <div className="rowc gap8">
-              <input
-                className="field mono"
-                placeholder="name@okhdfcbank"
-                value={vpa}
-                onChange={(e) => setVpa(e.target.value.toLowerCase())}
-                onKeyDown={(e) => e.key === "Enter" && vpaValid && link("UPI ID")}
-              />
-              <button
-                className="btn btn-ink btn-sm"
-                style={{ flex: "0 0 auto" }}
-                disabled={!vpaValid}
-                onClick={() => link("UPI ID")}
-              >
-                Verify
-              </button>
-            </div>
+            <Field
+              label="IFSC"
+              value={ifsc}
+              placeholder="e.g. HDFC0001234"
+              mono
+              onChange={(v) =>
+                setIfsc(v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 11))
+              }
+            />
+            {ifsc.length === 11 && !ifscOk && (
+              <div className="red mt12" style={{ fontSize: 13 }}>
+                That IFSC doesn&rsquo;t look right — 4 letters, a 0, then 6 characters.
+              </div>
+            )}
+
+            {error && (
+              <div className="red mt16" style={{ fontSize: 13 }}>
+                {error}
+              </div>
+            )}
 
             <div
               className="rowc gap8"
               style={{ justifyContent: "center", color: "var(--mute)", marginTop: 22, fontSize: 12 }}
             >
-              <LockIcon size={13} /> Bank-grade security · powered by UPI
+              <LockIcon size={13} /> Sent straight to our registrar · never stored in the app
             </div>
           </>
         )}
       </div>
-      <Footer
-        label={linked ? "Continue" : "Link a bank to continue"}
-        disabled={!linked}
-        onClick={next}
-      />
+      {registered ? (
+        <Footer label="Continue" onClick={next} />
+      ) : (
+        <div className="sticky-cta" style={{ borderTop: "none" }}>
+          <button
+            className="btn btn-ink btn-block"
+            disabled={!valid || busy}
+            onClick={submit}
+          >
+            {busy ? (
+              <>
+                <Spinner /> Registering…
+              </>
+            ) : (
+              "Add bank account"
+            )}
+          </button>
+        </div>
+      )}
     </>
   );
 }

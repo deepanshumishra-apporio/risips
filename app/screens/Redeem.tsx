@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { fundByIsin, useStore } from "../lib/store";
+import { fundByIsin, primaryBank, useStore } from "../lib/store";
 import { AmcLogo } from "../components/AmcLogo";
 import { Spinner } from "../components/ui";
 import { CheckIcon, ChevronLeft } from "../components/icons";
-import { inr, units as fmtUnits } from "../lib/format";
+import { bankLabel, inr, units as fmtUnits } from "../lib/format";
 
 export function Redeem() {
   const { route, back, switchTab, state, redeem } = useStore();
@@ -50,7 +50,7 @@ export function Redeem() {
             days.
           </p>
           <div className="mono muted mt16" style={{ fontSize: 13 }}>
-            To HDFC ••••4321
+            To {bankLabel(primaryBank(state))}
           </div>
         </div>
         <div style={{ padding: "0 20px 40px" }}>

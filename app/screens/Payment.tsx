@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { fundByIsin, useStore, type InvestDraft } from "../lib/store";
+import { fundByIsin, primaryBank, useStore, type InvestDraft } from "../lib/store";
 import { Spinner } from "../components/ui";
 import { LockIcon } from "../components/icons";
-import { inr } from "../lib/format";
+import { bankLabel, inr } from "../lib/format";
 
 export function Payment() {
   const {
@@ -140,7 +140,9 @@ export function Payment() {
               {isWallet ? "Balance after" : "Pay from"}
             </span>
             <span className="mono" style={{ color: "var(--paper)", fontSize: 13 }}>
-              {isWallet ? inr(Math.max(0, app.wallet - amount)) : "HDFC ••••4321"}
+              {isWallet
+                ? inr(Math.max(0, app.wallet - amount))
+                : bankLabel(primaryBank(app))}
             </span>
           </div>
         </div>

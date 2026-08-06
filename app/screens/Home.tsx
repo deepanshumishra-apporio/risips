@@ -10,6 +10,7 @@ import {
   BellIcon,
   ChevronRight,
   ExploreIcon,
+  OrdersIcon,
   PortfolioIcon,
   HeartIcon,
   WalletIcon,
@@ -185,8 +186,9 @@ export function Home() {
                 {inr(state.wallet)}
               </span>
             </span>
+            {/* Top-ups are closed until a payment gateway is connected — don't advertise it. */}
             <span className="chip chip-sm" style={{ pointerEvents: "none" }}>
-              Add money
+              {state.walletTopUp ? "Add money" : "View"}
             </span>
           </button>
         </div>
@@ -282,9 +284,17 @@ export function Home() {
                 <span className="h-sora" style={{ fontSize: 14 }}>
                   {user.name}
                 </span>
-                <span className="green rowc gap4" style={{ fontSize: 11.5 }}>
-                  <ShieldCheck size={12} /> KYC verified
-                </span>
+                {/* Reflect the real KYC state — this read "KYC verified" unconditionally,
+                    including for accounts that had never completed KYC. */}
+                {state.user.kycVerified ? (
+                  <span className="green rowc gap4" style={{ fontSize: 11.5 }}>
+                    <ShieldCheck size={12} /> KYC verified
+                  </span>
+                ) : (
+                  <span className="muted rowc gap4" style={{ fontSize: 11.5 }}>
+                    <ShieldCheck size={12} /> KYC pending
+                  </span>
+                )}
               </div>
             </div>
             <button
@@ -304,6 +314,27 @@ export function Home() {
               }}
             >
               <PortfolioIcon size={18} /> My SIPs
+              {state.sips.length > 0 && (
+                <span className="mono muted" style={{ fontSize: 12, marginLeft: "auto" }}>
+                  {state.sips.filter((s) => s.status === "Active").length}
+                </span>
+              )}
+            </button>
+            {/* Transactions is a tab screen, so it replaces the stack rather than pushing
+                onto it — otherwise backing out of it returns here instead of to Home. */}
+            <button
+              className="menu-item"
+              onClick={() => {
+                setMenu(false);
+                switchTab("orders");
+              }}
+            >
+              <OrdersIcon size={18} /> Transactions
+              {state.orders.length > 0 && (
+                <span className="mono muted" style={{ fontSize: 12, marginLeft: "auto" }}>
+                  {state.orders.length}
+                </span>
+              )}
             </button>
             <button
               className="menu-item danger"

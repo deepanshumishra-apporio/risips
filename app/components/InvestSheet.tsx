@@ -250,7 +250,8 @@ export function InvestSheet({
         )}
         {amount >= min && method === "wallet" && !walletOk && (
           <div className="red mt12" style={{ fontSize: 13 }}>
-            Balance short by {inr(amount - state.wallet)}. Add money or use UPI.
+            Balance short by {inr(amount - state.wallet)}.{" "}
+            {state.walletTopUp ? "Add money or use UPI." : "Pay by UPI instead."}
           </div>
         )}
 

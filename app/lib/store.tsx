@@ -29,6 +29,7 @@ import {
 } from "./api";
 import type {
   AppState,
+  Bank,
   Fund,
   Holding,
   Order,
@@ -57,6 +58,15 @@ function cacheFunds(dtos: FundDTO[]): Fund[] {
 
 export const fundByIsin = (isin: string | null | undefined): Fund | undefined =>
   isin ? fundCache.get(isin) : undefined;
+
+/**
+ * The account we debit and credit by default.
+ *
+ * Upstream exposes no "primary" flag, so the first registered bank is it. Returns null when
+ * the investor has registered none — callers must render that case rather than assume an
+ * account exists.
+ */
+export const primaryBank = (state: AppState): Bank | null => state.banks[0] ?? null;
 
 /* ----------------------------- routing ---------------------------------- */
 
@@ -129,6 +139,9 @@ function orderStatus(raw: string, kind: Order["kind"]): Order["status"] {
 function orderKind(orderType: string): Order["kind"] {
   if (orderType === "sell" || orderType === "swp") return "Redeem";
   if (orderType === "sip") return "SIP";
+  // switch_in is the receiving leg of a switch, and an stp is a scheduled switch — both
+  // belong with switches rather than being lumped in with lumpsum buys.
+  if (orderType === "switch" || orderType === "switch_in" || orderType === "stp") return "Switch";
   return "One-time";
 }
 
@@ -198,7 +211,6 @@ const EMPTY_USER: User = {
   name: "",
   phone: "",
   pan: "",
-  bank: "",
   kycVerified: false,
   investorId: null,
   investorStatus: null,
@@ -215,8 +227,10 @@ function emptyState(): AppState {
     sips: [],
     watchlists: [],
     cart: [],
+    banks: [],
     wallet: 0,
     walletTxns: [],
+    walletTopUp: false,
     notificationsSeen: true,
     unreadNotifications: 0,
     portfolioTotals: { invested: 0, current: 0, gain: 0, returnPct: 0 },
@@ -379,13 +393,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const [watchRes, cartRes, walletRes, notifRes] = await Promise.all([
         api.app.watchlists().catch(() => ({ results: [] })),
         api.app.cart().catch(() => ({ results: [], total: 0 })),
-        api.app.wallet().catch(() => ({ balance: 0, transactions: [] })),
+        api.app.wallet().catch(() => ({ balance: 0, transactions: [], topUpEnabled: false })),
         api.app.notifications().catch(() => ({ results: [], unread: 0 })),
       ]);
 
       let orders: Order[] = [];
       let sips: SIP[] = [];
       let holdings: Holding[] = [];
+      let banks: Bank[] = [];
       let totals = { invested: 0, current: 0, gain: 0, returnPct: 0 };
       // One slice failing upstream shouldn't blank the whole screen, but it shouldn't look
       // like "you have no orders" either — record it so the UI can say what didn't load.
@@ -396,11 +411,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       };
 
       if (me.user.investorId) {
-        const [ordersRes, sipsRes, portfolioRes] = await Promise.all([
+        const [ordersRes, sipsRes, portfolioRes, banksRes] = await Promise.all([
           api.orders.list().catch(noteError("orders")),
           api.systematic.sips().catch(noteError("sips")),
           api.investor.portfolio().catch(noteError("portfolio")),
+          api.investor.banks().catch(noteError("banks")),
         ]);
+
+        banks = (banksRes?.results ?? []).map((b) => ({
+          bankId: b.bankId,
+          accountType: b.accountType,
+          accountNumberMasked: b.accountNumberMasked,
+          ifsc: b.ifsc,
+          status: b.status,
+        }));
 
         const orderRows = ordersRes?.results ?? [];
         const sipRows = sipsRes?.results ?? [];
@@ -452,7 +476,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           phone: me.user.mobile,
           pan: me.user.pan ?? "",
           email: me.user.email ?? undefined,
-          bank: "",
           kycVerified: me.investorStatus === "ready_to_invest",
           investorId: me.user.investorId,
           investorStatus: me.investorStatus,
@@ -480,8 +503,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         sips,
         watchlists,
         cart: cartRes.results.map((i) => ({ isin: i.fund.isin ?? i.fund.id, amount: i.amount })),
+        banks,
         wallet: walletRes.balance,
         walletTxns,
+        walletTopUp: walletRes.topUpEnabled,
         notificationsSeen: notifRes.unread === 0,
         unreadNotifications: notifRes.unread,
         portfolioTotals: totals,
@@ -870,31 +895,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   /* ------------------------------- wallet --------------------------------- */
 
-  const addMoney = useCallback(
-    async (amount: number) => {
-      try {
-        const res = await api.app.addMoney(amount, "Added to wallet");
-        setState((prev) => ({ ...prev, wallet: res.balance }));
-        await refresh();
-      } catch (e) {
-        reportError(e, "Couldn't add money.");
-      }
-    },
-    [refresh, reportError],
-  );
+  // These two rethrow rather than report. Their callers show a success screen once the
+  // promise resolves, so swallowing the error would tell the user their money moved when it
+  // didn't; both callers already catch and toast the message.
+  const addMoney = useCallback(async (amount: number) => {
+    const res = await api.app.addMoney(amount, "Added to wallet");
+    setState((prev) => ({ ...prev, wallet: res.balance }));
+    await refresh();
+  }, [refresh]);
 
-  const withdrawMoney = useCallback(
-    async (amount: number) => {
-      try {
-        const res = await api.app.withdraw(amount, "Withdrawn to bank");
-        setState((prev) => ({ ...prev, wallet: res.balance }));
-        await refresh();
-      } catch (e) {
-        reportError(e, "Couldn't withdraw.");
-      }
-    },
-    [refresh, reportError],
-  );
+  const withdrawMoney = useCallback(async (amount: number) => {
+    const res = await api.app.withdraw(amount, "Withdrawn to bank");
+    setState((prev) => ({ ...prev, wallet: res.balance }));
+    await refresh();
+  }, [refresh]);
 
   const spendFromWallet = useCallback(
     async (amount: number, label: string) => {

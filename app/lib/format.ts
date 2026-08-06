@@ -67,11 +67,29 @@ export const pctOr = (v: number | null | undefined) => (v == null ? DASH : pct(v
 export const unitsOr = (v: number | null | undefined) => (v == null ? DASH : units(v));
 export const textOr = (v: string | null | undefined) => (v && v.trim() ? v : DASH);
 
-/** Deterministic-ish folio number from an isin (no randomness in render). */
-export function folioFor(isin: string): string {
-  let h = 0;
-  for (let i = 0; i < isin.length; i++) h = (h * 31 + isin.charCodeAt(i)) >>> 0;
-  const a = (h % 9000) + 1000;
-  const b = (Math.floor(h / 9000) % 90000) + 10000;
-  return `${a} / ${b}`;
+/* ------------------------------- banks ----------------------------------- */
+
+/**
+ * How to render a registered bank account, e.g. "HDFC ••••4321".
+ *
+ * Tarrakki gives us no bank name — only the IFSC, whose first four characters are the
+ * bank's code by RBI convention (HDFC0001234 → HDFC). Deriving the name that way keeps it
+ * honest; the alternative is a hardcoded label that lies whenever the account isn't the one
+ * it was written for.
+ *
+ * Pass `null`/`undefined` (no bank registered) and you get "No bank linked" — say that
+ * plainly rather than showing a plausible-looking account the investor doesn't have.
+ */
+export function bankLabel(
+  bank: { ifsc?: string | null; accountNumberMasked?: string | null } | null | undefined,
+): string {
+  if (!bank) return "No bank linked";
+  const code = (bank.ifsc ?? "").slice(0, 4).toUpperCase();
+  const acc = bank.accountNumberMasked ?? "";
+  if (!code && !acc) return "Bank account";
+  return [code, acc].filter(Boolean).join(" ");
 }
+
+// Removed: `folioFor(isin)`, which hashed an ISIN into a plausible-looking folio number.
+// Orders carry the real folio from upstream (`Order.folio`, null until allotment); a made-up
+// one is worse than "—" because it reads as authoritative and matches no actual account.

@@ -81,7 +81,14 @@ export interface Holding {
 }
 
 export type OrderStatus = "Pending" | "Allotted" | "Redeemed" | "Failed" | "Cancelled";
-export type OrderKind = "One-time" | "SIP" | "Redeem";
+/**
+ * How the order was placed, as the transaction history groups them.
+ *
+ * "One-time" is a lumpsum buy, "Switch" covers switch and switch_in (moving money between
+ * schemes without it leaving the platform), "Redeem" covers sell and swp. Upstream's
+ * `stp` also arrives as a switch, since that is what it is — a scheduled switch.
+ */
+export type OrderKind = "One-time" | "SIP" | "Switch" | "Redeem";
 
 export interface Order {
   id: string;
@@ -121,7 +128,6 @@ export interface User {
   name: string;
   phone: string;
   pan: string;
-  bank: string;
   kycVerified: boolean;
   /** Tarrakki investor id, once linked. */
   investorId?: string | null;
@@ -138,7 +144,22 @@ export interface User {
   signatureDone?: boolean;
   faceVerified?: boolean;
   biometricEnabled?: boolean;
-  upiApp?: string;
+}
+
+/**
+ * A bank the investor has registered upstream (GET /api/investor/banks).
+ *
+ * Note what is *not* here: the bank's display name. Tarrakki returns only the IFSC, so a
+ * name has to be derived from it (see `bankLabel`) rather than invented.
+ */
+export interface Bank {
+  bankId: string;
+  accountType: string;
+  /** Last four digits only; the backend never sends the full number to the browser. */
+  accountNumberMasked: string;
+  ifsc: string;
+  /** Only the detail endpoint carries approval status; null when read from the list. */
+  status: string | null;
 }
 
 export interface CartItem {
@@ -171,8 +192,12 @@ export interface AppState {
   sips: SIP[];
   watchlists: Watchlist[];
   cart: CartItem[];
+  /** Banks registered upstream. Empty until the investor adds one — never assume [0] exists. */
+  banks: Bank[];
   wallet: number;
   walletTxns: WalletTxn[];
+  /** Whether the server accepts wallet top-ups. False until a payment gateway is live. */
+  walletTopUp: boolean;
   notificationsSeen: boolean;
   unreadNotifications: number;
   portfolioTotals: { invested: number; current: number; gain: number; returnPct: number };
@@ -182,7 +207,7 @@ export interface AppState {
    * does go down, and telling someone they have no orders when they have seventeen is
    * worse than saying nothing loaded.
    */
-  loadErrors: { orders?: string; sips?: string; portfolio?: string };
+  loadErrors: { orders?: string; sips?: string; portfolio?: string; banks?: string };
 }
 
 export interface Toast {

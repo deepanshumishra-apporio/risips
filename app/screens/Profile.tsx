@@ -1,9 +1,9 @@
 "use client";
 
-import { useStore, portfolioTotals } from "../lib/store";
+import { useStore, portfolioTotals, primaryBank } from "../lib/store";
 import { Mark } from "../components/Mark";
 import { ChevronLeft, ChevronRight, ShieldCheck } from "../components/icons";
-import { inr } from "../lib/format";
+import { bankLabel, inr, DASH } from "../lib/format";
 
 function maskPan(pan: string) {
   return pan.length === 10 ? `${pan.slice(0, 3)}••••${pan.slice(-2)}` : pan;
@@ -13,13 +13,15 @@ export function Profile() {
   const { state, back, switchTab, go, logout } = useStore();
   const { user, holdings, sips } = state;
   const t = portfolioTotals(holdings);
+  // Registered upstream, not a field on the user record — see GET /api/investor/banks.
+  const bank = primaryBank(state);
 
   const rows: { label: string; value: string; mono?: boolean }[] = [
     { label: "PAN", value: maskPan(user.pan), mono: true },
     { label: "Mobile", value: `+91 ${user.phone}`, mono: true },
     { label: "Email", value: user.email ?? "—" },
     { label: "Date of birth", value: user.dob ?? "—", mono: true },
-    { label: "Bank account", value: user.bank, mono: true },
+    { label: "Bank account", value: bank ? bankLabel(bank) : DASH, mono: true },
   ];
 
   const kyc: { label: string; value: string }[] = [
@@ -36,7 +38,7 @@ export function Profile() {
 
   const checks: { label: string; ok: boolean }[] = [
     { label: "KYC (CVL KRA)", ok: user.kycVerified },
-    { label: "Bank linked", ok: !!user.bank },
+    { label: "Bank linked", ok: !!bank },
     { label: "Signature", ok: !!user.signatureDone },
     { label: "Face verified", ok: !!user.faceVerified },
     { label: "Biometric lock", ok: !!user.biometricEnabled },

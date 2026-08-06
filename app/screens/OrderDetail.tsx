@@ -1,9 +1,9 @@
 "use client";
 
-import { fundByIsin, useStore } from "../lib/store";
+import { fundByIsin, primaryBank, useStore } from "../lib/store";
 import { AmcLogo } from "../components/AmcLogo";
 import { CheckIcon, ChevronLeft, ChevronRight } from "../components/icons";
-import { inrOr, navOr, unitsOr, folioFor } from "../lib/format";
+import { bankLabel, inrOr, navOr, unitsOr, textOr, DASH } from "../lib/format";
 import type { Order } from "../lib/types";
 
 type StepState = "done" | "active" | "todo";
@@ -97,7 +97,9 @@ function buyTimeline(o: Order) {
   return (
     <>
       <Step state="done" title="Order placed" sub={o.placedLabel} />
-      <Step state="done" title="Payment successful" sub="via UPI · HDFC ••••4321" />
+      {/* No sub-label: nothing upstream tells us which account settled this order, and
+          naming one would be a guess. See the "Paid via" row. */}
+      <Step state="done" title="Payment successful" />
       <Step
         state={allotted ? "done" : "active"}
         title={allotted ? "Units allotted" : "Units being allotted"}
@@ -112,7 +114,7 @@ function buyTimeline(o: Order) {
   );
 }
 
-function redeemTimeline(o: Order) {
+function redeemTimeline(o: Order, bankName: string | null) {
   const done = o.status === "Redeemed" || o.status === "Allotted";
   return (
     <>
@@ -121,7 +123,11 @@ function redeemTimeline(o: Order) {
       <Step
         state={done ? "done" : "active"}
         title={done ? "Amount credited" : "Payout in progress"}
-        sub="To HDFC ••••4321 · by T+3 working days"
+        sub={
+          bankName
+            ? `To ${bankName} · by T+3 working days`
+            : "By T+3 working days"
+        }
         last
       />
     </>
@@ -136,6 +142,7 @@ export function OrderDetail() {
   if (!order) return null;
   const fund = fundByIsin(order.isin);
   const isRedeem = order.kind === "Redeem";
+  const bank = primaryBank(state);
   const statusColor =
     order.status === "Pending"
       ? "#a06f22"
@@ -149,11 +156,15 @@ export function OrderDetail() {
     { label: isRedeem ? "Redeemed amount" : "Amount", value: inrOr(order.amount), mono: true },
     { label: "Units", value: unitsOr(order.units), mono: true },
     { label: "NAV", value: navOr(fund?.nav), mono: true },
-    { label: "Folio no.", value: folioFor(order.isin), mono: true },
+    // The real folio from upstream. It is null until units are allotted — show that rather
+    // than a number derived from the ISIN, which looked authoritative and matched nothing.
+    { label: "Folio no.", value: textOr(order.folio), mono: true },
     { label: "Placed on", value: order.placedLabel },
     {
       label: isRedeem ? "Credit to" : "Paid via",
-      value: "HDFC ••••4321",
+      // Redemptions land in the registered bank. For a purchase, upstream returns no
+      // payment method on the order, so there is nothing true to show — see /api/payments.
+      value: isRedeem ? bankLabel(bank) : DASH,
       mono: true,
     },
   ];
@@ -249,7 +260,9 @@ export function OrderDetail() {
           Tracking
         </div>
         <div className="card card-lg">
-          {isRedeem ? redeemTimeline(order) : buyTimeline(order)}
+          {isRedeem
+            ? redeemTimeline(order, bank ? bankLabel(bank) : null)
+            : buyTimeline(order)}
         </div>
 
         {order.kind === "SIP" && (

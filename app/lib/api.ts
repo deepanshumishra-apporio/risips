@@ -863,7 +863,14 @@ export const api = {
       request<{ ok: true }>(`/api/app/cart/${encodeURIComponent(fund)}`, { method: "DELETE" }),
     clearCart: () => request<{ ok: true }>("/api/app/cart", { method: "DELETE" }),
 
-    wallet: () => request<{ balance: number; transactions: WalletTxnDTO[] }>("/api/app/wallet"),
+    /**
+     * `topUpEnabled` is false until a payment gateway is connected; `addMoney` returns 503
+     * in that case, so the UI should hide the top-up entry points rather than offer them.
+     */
+    wallet: () =>
+      request<{ balance: number; transactions: WalletTxnDTO[]; topUpEnabled: boolean }>(
+        "/api/app/wallet",
+      ),
     addMoney: (amount: number, label?: string) =>
       request<{ balance: number }>("/api/app/wallet/add", { method: "POST", body: { amount, label } }),
     withdraw: (amount: number, label?: string) =>

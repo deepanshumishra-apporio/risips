@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useStore } from "../lib/store";
+import { primaryBank, useStore } from "../lib/store";
 import { Spinner } from "../components/ui";
 import {
   ChevronLeft,
@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   CheckIcon,
 } from "../components/icons";
-import { inr } from "../lib/format";
+import { bankLabel, inr } from "../lib/format";
 import type { WalletTxn } from "../lib/types";
 
 const CHIPS = [500, 1000, 5000, 10000];
@@ -28,8 +28,19 @@ export function Wallet() {
   const [phase, setPhase] = useState<"idle" | "processing" | "done">("idle");
 
   const bal = state.wallet;
+  // The server refuses top-ups until a payment gateway is connected (503 from
+  // POST /app/wallet/add), so don't offer a button that can only fail.
+  const canTopUp = state.walletTopUp;
+  // Withdrawals need a real destination account. There is no fallback: with no bank
+  // registered upstream there is nowhere to send the money, so the action is unavailable.
+  const bank = primaryBank(state);
+  const canWithdraw = bal > 0 && !!bank;
 
   function openAdd() {
+    if (!canTopUp) {
+      toast("Adding money isn't available yet — invest via UPI at checkout.");
+      return;
+    }
     setMode("add");
     setAmount(1000);
   }
@@ -79,14 +90,19 @@ export function Wallet() {
             <ShieldCheck size={13} /> Held with our RBI-regulated partner bank
           </div>
           <div className="rowc gap12 mt16">
-            <button className="btn btn-green grow" onClick={openAdd}>
+            <button
+              className="btn btn-green grow"
+              onClick={openAdd}
+              disabled={!canTopUp}
+              style={{ opacity: canTopUp ? 1 : 0.5 }}
+            >
               Add money
             </button>
             <button
               className="btn grow"
               style={{ background: "#2a2a24", color: "var(--paper)" }}
               onClick={openWithdraw}
-              disabled={bal <= 0}
+              disabled={!canWithdraw}
             >
               Withdraw
             </button>
@@ -94,8 +110,14 @@ export function Wallet() {
         </div>
 
         <div className="muted mt16" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-          Use your balance to invest instantly — no UPI approval needed at
-          checkout.
+          {canTopUp ? (
+            "Use your balance to invest instantly — no UPI approval needed at checkout."
+          ) : (
+            <>
+              Adding money is coming soon — we&rsquo;re still connecting our payment
+              partner. Until then, pay by UPI at checkout.
+            </>
+          )}
         </div>
 
         {/* transactions */}
@@ -198,7 +220,7 @@ export function Wallet() {
                   {inr(amount)} on the way
                 </div>
                 <div className="muted" style={{ fontSize: 13.5, maxWidth: "28ch" }}>
-                  Credited to HDFC ••••4321 by T+1 working day.
+                  Credited to {bankLabel(bank)} by T+1 working day.
                 </div>
                 <button
                   className="btn btn-ink btn-block mt16"
@@ -213,7 +235,7 @@ export function Wallet() {
                   Withdraw to bank
                 </div>
                 <div className="muted mt4" style={{ fontSize: 12.5 }}>
-                  Balance {inr(bal)} · to HDFC ••••4321
+                  Balance {inr(bal)} · to {bankLabel(bank)}
                 </div>
                 <div className="prefix-field field-lg mt16">
                   <span className="pf" style={{ fontSize: 24 }}>
